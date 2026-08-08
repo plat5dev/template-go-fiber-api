@@ -1,0 +1,16 @@
+project_id: my-app
+
+# Path mode until managed images ship. Accepts monorepo root, product root, or compose dir.
+plat5_compose: /path/to/plat5
+# auth_compose: /path/to/plat5
+
+auth:
+  enabled: false
+
+admin_token: dev-admin-token
+
+upstreams:
+  api: 3000
+
+routes:
+  - ./routes.yml

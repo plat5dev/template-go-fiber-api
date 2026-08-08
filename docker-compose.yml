@@ -1,0 +1,43 @@
+name: go-fiber-api
+
+services:
+  api:
+    build:
+      context: .
+      target: local
+    labels:
+      service.name: api
+      service.namespace: api
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      INTERNAL_PORT: 3001
+      DATABASE_PATH: /data/app.db
+      OTEL_SERVICE_NAME: api
+      OTEL_SERVICE_NAMESPACE: api
+      DEPLOYMENT_ENV: docker
+      # OTLP destination (traces default on; metrics OTLP needs OTEL_METRICS_EXPORTER=otlp):
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+
+    volumes:
+      - .:/app
+      - sqlite_data:/data
+      - go_mod_cache:/go/pkg/mod
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-fsS",
+          "http://127.0.0.1:3001/health/ready",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  sqlite_data:
+  go_mod_cache:

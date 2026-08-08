@@ -1,0 +1,7 @@
+data/*.db
+data/*.db-*
+.env
+.DS_Store
+*.log
+/bin/
+/tmp/

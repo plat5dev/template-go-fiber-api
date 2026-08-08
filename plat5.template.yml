@@ -1,0 +1,15 @@
+name: go-fiber-api
+description: Go + Fiber reference API (profiles, projects, tasks)
+
+upstreams:
+  api: "3000"
+
+routes:
+  - ./routes.yml
+
+substitute:
+  - go.mod
+
+next:
+  - go mod tidy
+  - go run .

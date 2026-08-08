@@ -1,0 +1,23 @@
+services:
+  api:
+    # url comes from plat5.yml upstreams when using the CLI
+    user:
+      route_prefix: /api
+      routes:
+        - path: /profiles/me
+          methods: [GET, PUT]
+        - path: /profiles/{user_id}
+          methods: [GET]
+
+    organization:
+      organization_param: organization_id
+      route_prefix: /api/organizations/{organization_id}
+      routes:
+        - path: /projects
+          methods: [GET, POST]
+        - path: /projects/{project_id}
+          methods: [GET, PATCH, DELETE]
+        - path: /projects/{project_id}/tasks
+          methods: [GET, POST]
+        - path: /projects/{project_id}/tasks/{task_id}
+          methods: [GET, PATCH, DELETE]
