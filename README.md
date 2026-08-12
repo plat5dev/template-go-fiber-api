@@ -21,7 +21,7 @@ Gateway authenticates. This service trusts identity headers and owns business lo
 | Resource | Scope | Identity headers |
 |----------|-------|------------------|
 | Profiles | `user` | `X-User-Id` |
-| Projects | `organization` | `X-Organization-Id`, `X-Membership-Id` |
+| Projects | `organization` | `X-Organization-Id`, `X-Member-Id` |
 | Tasks | `organization` (nested under project) | same |
 
 Missing expected identity headers → **500 `INTERNAL_ERROR`** (platform bug), never 401.

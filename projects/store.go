@@ -9,13 +9,13 @@ import (
 )
 
 type Project struct {
-	ID                    string `json:"id"`
-	OrganizationID        string `json:"organization_id"`
-	Name                  string `json:"name"`
-	Description           string `json:"description"`
-	CreatedByMembershipID string `json:"created_by_membership_id"`
-	CreatedAt             string `json:"created_at"`
-	UpdatedAt             string `json:"updated_at"`
+	ID                string `json:"id"`
+	OrganizationID    string `json:"organization_id"`
+	Name              string `json:"name"`
+	Description       string `json:"description"`
+	CreatedByMemberID string `json:"created_by_member_id"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
 }
 
 type Store struct {
@@ -29,7 +29,7 @@ func NewStore(db *sql.DB) *Store {
 func (s *Store) ListByOrg(ctx context.Context, orgID string) ([]Project, error) {
 	start := time.Now()
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, organization_id, name, description, created_by_membership_id, created_at, updated_at
+		SELECT id, organization_id, name, description, created_by_member_id, created_at, updated_at
 		FROM projects WHERE organization_id = ? ORDER BY created_at DESC`, orgID)
 	metrics.RecordDBOperation("projects.list", time.Since(start), err)
 	if err != nil {
@@ -40,7 +40,7 @@ func (s *Store) ListByOrg(ctx context.Context, orgID string) ([]Project, error) 
 	out := make([]Project, 0)
 	for rows.Next() {
 		var p Project
-		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.CreatedByMembershipID, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.CreatedByMemberID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -51,10 +51,10 @@ func (s *Store) ListByOrg(ctx context.Context, orgID string) ([]Project, error) 
 func (s *Store) FindInOrg(ctx context.Context, orgID, projectID string) (*Project, error) {
 	start := time.Now()
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, organization_id, name, description, created_by_membership_id, created_at, updated_at
+		SELECT id, organization_id, name, description, created_by_member_id, created_at, updated_at
 		FROM projects WHERE id = ? AND organization_id = ?`, projectID, orgID)
 	var p Project
-	err := row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.CreatedByMembershipID, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.OrganizationID, &p.Name, &p.Description, &p.CreatedByMemberID, &p.CreatedAt, &p.UpdatedAt)
 	metrics.RecordDBOperation("projects.find", time.Since(start), err)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -68,9 +68,9 @@ func (s *Store) FindInOrg(ctx context.Context, orgID, projectID string) (*Projec
 func (s *Store) Insert(ctx context.Context, p *Project) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO projects (id, organization_id, name, description, created_by_membership_id, created_at, updated_at)
+		INSERT INTO projects (id, organization_id, name, description, created_by_member_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.OrganizationID, p.Name, p.Description, p.CreatedByMembershipID, p.CreatedAt, p.UpdatedAt)
+		p.ID, p.OrganizationID, p.Name, p.Description, p.CreatedByMemberID, p.CreatedAt, p.UpdatedAt)
 	metrics.RecordDBOperation("projects.insert", time.Since(start), err)
 	return err
 }

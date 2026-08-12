@@ -14,9 +14,9 @@ import (
 )
 
 type Handler struct {
-	store         *Store
-	projectStore  *projects.Store
-	telem         *telemetry.Telemetry
+	store        *Store
+	projectStore *projects.Store
+	telem        *telemetry.Telemetry
 }
 
 func NewHandler(store *Store, projectStore *projects.Store, telem *telemetry.Telemetry) *Handler {
@@ -61,7 +61,7 @@ func (h *Handler) List(c fiber.Ctx) error {
 
 func (h *Handler) Create(c fiber.Ctx) error {
 	orgID := middleware.GetOrganizationID(c)
-	membershipID := middleware.GetMembershipID(c)
+	memberID := middleware.GetMemberID(c)
 	projectID := c.Params("project_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
 		return err
@@ -83,14 +83,14 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	t := &Task{
-		ID:                    ulid.Make().String(),
-		OrganizationID:        orgID,
-		ProjectID:             projectID,
-		Title:                 title,
-		Status:                status,
-		CreatedByMembershipID: membershipID,
-		CreatedAt:             now,
-		UpdatedAt:             now,
+		ID:                ulid.Make().String(),
+		OrganizationID:    orgID,
+		ProjectID:         projectID,
+		Title:             title,
+		Status:            status,
+		CreatedByMemberID: memberID,
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}
 	if err := h.store.Insert(c.Context(), t); err != nil {
 		return errors.InternalError()

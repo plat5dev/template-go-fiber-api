@@ -40,8 +40,8 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 		if orgID := c.Get(OrganizationIDHeader); orgID != "" {
 			span.SetAttributes(attribute.String("organization.id", orgID))
 		}
-		if membershipID := c.Get(MembershipIDHeader); membershipID != "" {
-			span.SetAttributes(attribute.String("membership.id", membershipID))
+		if memberID := c.Get(MemberIDHeader); memberID != "" {
+			span.SetAttributes(attribute.String("member.id", memberID))
 		}
 		if status >= 500 {
 			kind := errors.KindInternal.String()
@@ -121,8 +121,8 @@ func buildRequestLogger(c fiber.Ctx, telem *telemetry.Telemetry, route string, s
 	if orgID := c.Get(OrganizationIDHeader); orgID != "" {
 		ctx = ctx.Str("organization_id", orgID)
 	}
-	if membershipID := c.Get(MembershipIDHeader); membershipID != "" {
-		ctx = ctx.Str("membership_id", membershipID)
+	if memberID := c.Get(MemberIDHeader); memberID != "" {
+		ctx = ctx.Str("member_id", memberID)
 	}
 
 	return ctx.Logger()

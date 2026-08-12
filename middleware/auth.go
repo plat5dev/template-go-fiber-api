@@ -11,11 +11,11 @@ import (
 const (
 	UserIDHeader         = "X-User-Id"
 	OrganizationIDHeader = "X-Organization-Id"
-	MembershipIDHeader   = "X-Membership-Id"
+	MemberIDHeader       = "X-Member-Id"
 
 	UserIDKey         = "user_id"
 	OrganizationIDKey = "organization_id"
-	MembershipIDKey   = "membership_id"
+	MemberIDKey       = "member_id"
 )
 
 // RequireUserID validates X-User-Id (gateway-injected). Missing → INTERNAL_ERROR.
@@ -34,22 +34,22 @@ func RequireUserID() fiber.Handler {
 	}
 }
 
-// RequireOrg validates org + membership headers (gateway-injected). Missing → INTERNAL_ERROR.
+// RequireOrg validates org + member headers (gateway-injected). Missing → INTERNAL_ERROR.
 func RequireOrg() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		orgID := c.Get(OrganizationIDHeader)
-		membershipID := c.Get(MembershipIDHeader)
-		if orgID == "" || membershipID == "" {
+		memberID := c.Get(MemberIDHeader)
+		if orgID == "" || memberID == "" {
 			span := trace.SpanFromContext(c.Context())
 			span.SetAttributes(attribute.String("error.kind", errors.KindInternal.String()))
 			return errors.InternalError()
 		}
 		c.Locals(OrganizationIDKey, orgID)
-		c.Locals(MembershipIDKey, membershipID)
+		c.Locals(MemberIDKey, memberID)
 		span := trace.SpanFromContext(c.Context())
 		span.SetAttributes(
 			attribute.String("organization.id", orgID),
-			attribute.String("membership.id", membershipID),
+			attribute.String("member.id", memberID),
 		)
 		return c.Next()
 	}
@@ -69,8 +69,8 @@ func GetOrganizationID(c fiber.Ctx) string {
 	return ""
 }
 
-func GetMembershipID(c fiber.Ctx) string {
-	if v, ok := c.Locals(MembershipIDKey).(string); ok {
+func GetMemberID(c fiber.Ctx) string {
+	if v, ok := c.Locals(MemberIDKey).(string); ok {
 		return v
 	}
 	return ""
