@@ -34,7 +34,7 @@ plat5 init --template go-fiber-api --auth -y
 
 # edit go.mod module path if desired, then:
 go mod tidy
-plat5 start          # gateway :5001, registry :5002, applies routes.yml
+plat5 start          # gateway :5001, registry :5002, applies routes.identity.yml + routes.yml
 go run .             # API :3000, health :3001
 ```
 
@@ -115,7 +115,8 @@ metrics/             # Prometheus SoT
 middleware/          # identity + request logger
 telemetry/           # OTel init (exporter matrix)
 profiles|projects|tasks/
-routes.yml           # gateway route registry
+routes.identity.yml  # identity public surface (edit or omit)
+routes.yml           # app gateway routes
 plat5.template.yml   # CLI init metadata
 ```
 

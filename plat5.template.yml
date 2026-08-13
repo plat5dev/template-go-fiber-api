@@ -5,6 +5,7 @@ upstreams:
   api: "3000"
 
 routes:
+  - ./routes.identity.yml
   - ./routes.yml
 
 substitute:
