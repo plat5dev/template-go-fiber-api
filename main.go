@@ -63,6 +63,7 @@ func main() {
 		otel.WithTracerProvider(telem.TracerProvider()),
 		otel.WithPropagators(telem.Propagator()),
 		otel.WithoutMetrics(true),
+		otel.WithSpanNameFormatter(middleware.HTTPSpanName),
 	))
 	app.Use(middleware.RequestLogger(telem))
 

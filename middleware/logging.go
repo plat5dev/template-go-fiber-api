@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -13,6 +14,15 @@ import (
 	"github.com/example/go-fiber-api/metrics"
 	"github.com/example/go-fiber-api/telemetry"
 )
+
+// HTTPSpanName is `{method} {route}` when a template exists, else `{method}`.
+func HTTPSpanName(c fiber.Ctx) string {
+	method := c.Method()
+	if r := c.Route(); r != nil && r.Path != "" {
+		return method + " " + r.Path
+	}
+	return method
+}
 
 // RequestLogger logs requests and records HTTP metrics.
 func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
@@ -48,8 +58,11 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 			if apiErr, ok := err.(*errors.ApiError); ok && apiErr.Kind != "" {
 				kind = apiErr.Kind.String()
 			}
-			span.SetAttributes(attribute.String("error.kind", kind))
-			span.SetStatus(codes.Error, "request failed")
+			span.SetAttributes(
+				attribute.String("error.kind", kind),
+				attribute.String("error.type", strconv.Itoa(status)),
+			)
+			span.SetStatus(codes.Error, "")
 		}
 
 		logger := buildRequestLogger(c, telem, routePattern, status, duration)
