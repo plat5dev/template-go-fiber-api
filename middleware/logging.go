@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -58,10 +57,7 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 			if apiErr, ok := err.(*errors.ApiError); ok && apiErr.Kind != "" {
 				kind = apiErr.Kind.String()
 			}
-			span.SetAttributes(
-				attribute.String("error.kind", kind),
-				attribute.String("error.type", strconv.Itoa(status)),
-			)
+			span.SetAttributes(attribute.String("error.kind", kind))
 			span.SetStatus(codes.Error, "")
 		}
 
