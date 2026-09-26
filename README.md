@@ -2,7 +2,7 @@
 
 Reference Plat5 business service: **Go** + **Fiber v3**, SQLite (`modernc.org/sqlite`), Prometheus + OTel.
 
-Gateway authenticates. This service trusts identity headers and owns business logic only.
+Gateway admits the caller and fills `{subject.*}` into `upstream`. This service trusts that path and owns business logic only. It does not parse `Authorization` or `X-API-Key`, and it does not read identity from headers.
 
 ## Stack
 
@@ -18,13 +18,17 @@ Gateway authenticates. This service trusts identity headers and owns business lo
 
 ## Demo domain
 
-| Resource | Scope | Identity headers |
-|----------|-------|------------------|
-| Profiles | `user` | `X-User-Id` |
-| Projects | `organization` | `X-Organization-Id`, `X-Member-Id` |
-| Tasks | `organization` (nested under project) | same |
+This process listens on the rewritten path.
 
-Missing expected identity headers → **500 `INTERNAL_ERROR`** (platform bug), never 401.
+| Resource | Scope | Credential | Edge | Listen path |
+|----------|-------|------------|------|-------------|
+| Profiles | `user` | user JWT or user API key | `/user/profile` | `/users/{user_id}/profile` |
+| Projects | `member` | member key or member session | `/member/projects` | `/organizations/{organization_id}/members/{member_id}/projects` |
+| Tasks | `member` | member key or member session | `/member/projects/{project_id}/tasks` | `.../projects/{project_id}/tasks` |
+
+`GET` and `PUT` on the profile. Projects and tasks: `GET` and `POST` on the collection; `GET`, `PATCH`, and `DELETE` on `{project_id}` / `{task_id}`.
+
+Profiles are the caller's. Projects and tasks record `created_by_member_id`. Member scope is a member key or member session, not a user JWT. Handlers read `user_id`, `organization_id`, and `member_id` from those path params.
 
 ## Quick start (host app + Plat5 CLI)
 
@@ -112,11 +116,11 @@ main.go              # dual listen: public + internal
 db/                  # SQLite open + migrate
 errors/              # Plat5 error envelope
 metrics/             # Prometheus SoT
-middleware/          # identity + request logger
+middleware/          # request logger
 telemetry/           # OTel init (exporter matrix)
 profiles|projects|tasks/
 routes.identity.yml  # identity public surface (edit or omit)
-routes.yml           # app gateway routes
+routes.yml           # app routes (edge path + upstream)
 plat5.template.yml   # CLI init metadata
 ```
 

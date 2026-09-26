@@ -43,13 +43,13 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 		if requestID := c.Get("X-Request-ID"); requestID != "" {
 			span.SetAttributes(attribute.String("request_id", requestID))
 		}
-		if userID := c.Get(UserIDHeader); userID != "" {
+		if userID := c.Params("user_id"); userID != "" {
 			span.SetAttributes(attribute.String("user.id", userID))
 		}
-		if orgID := c.Get(OrganizationIDHeader); orgID != "" {
+		if orgID := c.Params("organization_id"); orgID != "" {
 			span.SetAttributes(attribute.String("organization.id", orgID))
 		}
-		if memberID := c.Get(MemberIDHeader); memberID != "" {
+		if memberID := c.Params("member_id"); memberID != "" {
 			span.SetAttributes(attribute.String("member.id", memberID))
 		}
 		if status >= 500 {
@@ -124,13 +124,13 @@ func buildRequestLogger(c fiber.Ctx, telem *telemetry.Telemetry, route string, s
 	if requestID := c.Get("X-Request-ID"); requestID != "" {
 		ctx = ctx.Str("request_id", requestID)
 	}
-	if userID := c.Get(UserIDHeader); userID != "" {
+	if userID := c.Params("user_id"); userID != "" {
 		ctx = ctx.Str("user_id", userID)
 	}
-	if orgID := c.Get(OrganizationIDHeader); orgID != "" {
+	if orgID := c.Params("organization_id"); orgID != "" {
 		ctx = ctx.Str("organization_id", orgID)
 	}
-	if memberID := c.Get(MemberIDHeader); memberID != "" {
+	if memberID := c.Params("member_id"); memberID != "" {
 		ctx = ctx.Str("member_id", memberID)
 	}
 

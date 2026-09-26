@@ -8,7 +8,6 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/example/go-fiber-api/errors"
-	"github.com/example/go-fiber-api/middleware"
 	"github.com/example/go-fiber-api/projects"
 	"github.com/example/go-fiber-api/telemetry"
 )
@@ -47,7 +46,7 @@ func (h *Handler) requireProject(c fiber.Ctx, orgID, projectID string) error {
 }
 
 func (h *Handler) List(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
 		return err
@@ -60,8 +59,8 @@ func (h *Handler) List(c fiber.Ctx) error {
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
-	memberID := middleware.GetMemberID(c)
+	orgID := c.Params("organization_id")
+	memberID := c.Params("member_id")
 	projectID := c.Params("project_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
 		return err
@@ -99,7 +98,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
@@ -116,7 +115,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 }
 
 func (h *Handler) Update(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
@@ -154,7 +153,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {

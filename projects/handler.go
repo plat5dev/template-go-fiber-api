@@ -8,7 +8,6 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/example/go-fiber-api/errors"
-	"github.com/example/go-fiber-api/middleware"
 	"github.com/example/go-fiber-api/telemetry"
 )
 
@@ -32,7 +31,7 @@ type updateBody struct {
 }
 
 func (h *Handler) List(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	list, err := h.store.ListByOrg(c.Context(), orgID)
 	if err != nil {
 		return errors.InternalError()
@@ -41,8 +40,8 @@ func (h *Handler) List(c fiber.Ctx) error {
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
-	memberID := middleware.GetMemberID(c)
+	orgID := c.Params("organization_id")
+	memberID := c.Params("member_id")
 	var body createBody
 	if err := c.Bind().Body(&body); err != nil {
 		return errors.ValidationError("Request validation failed", nil)
@@ -75,7 +74,7 @@ func (h *Handler) Create(c fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	p, err := h.store.FindInOrg(c.Context(), orgID, projectID)
 	if err != nil {
@@ -88,7 +87,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 }
 
 func (h *Handler) Update(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	var body updateBody
 	if err := c.Bind().Body(&body); err != nil {
@@ -122,7 +121,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c fiber.Ctx) error {
-	orgID := middleware.GetOrganizationID(c)
+	orgID := c.Params("organization_id")
 	projectID := c.Params("project_id")
 	p, err := h.store.FindInOrg(c.Context(), orgID, projectID)
 	if err != nil {

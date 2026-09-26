@@ -7,7 +7,6 @@ import (
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/example/go-fiber-api/errors"
-	"github.com/example/go-fiber-api/middleware"
 	"github.com/example/go-fiber-api/telemetry"
 )
 
@@ -25,8 +24,8 @@ type upsertBody struct {
 	Bio         *string `json:"bio"`
 }
 
-func (h *Handler) GetMe(c fiber.Ctx) error {
-	userID := middleware.GetUserID(c)
+func (h *Handler) Get(c fiber.Ctx) error {
+	userID := c.Params("user_id")
 	p, err := h.store.FindByUserID(c.Context(), userID)
 	if err != nil {
 		return errors.InternalError()
@@ -47,8 +46,8 @@ func (h *Handler) GetMe(c fiber.Ctx) error {
 	return c.JSON(p)
 }
 
-func (h *Handler) UpsertMe(c fiber.Ctx) error {
-	userID := middleware.GetUserID(c)
+func (h *Handler) Upsert(c fiber.Ctx) error {
+	userID := c.Params("user_id")
 	var body upsertBody
 	if err := c.Bind().Body(&body); err != nil {
 		return errors.ValidationError("Request validation failed", nil)
@@ -92,18 +91,6 @@ func (h *Handler) UpsertMe(c fiber.Ctx) error {
 	}
 	if err := h.store.Insert(c.Context(), p); err != nil {
 		return errors.InternalError()
-	}
-	return c.JSON(p)
-}
-
-func (h *Handler) GetByID(c fiber.Ctx) error {
-	userID := c.Params("user_id")
-	p, err := h.store.FindByUserID(c.Context(), userID)
-	if err != nil {
-		return errors.InternalError()
-	}
-	if p == nil {
-		return errors.NotFoundError("profile", userID)
 	}
 	return c.JSON(p)
 }

@@ -67,30 +67,22 @@ func main() {
 	))
 	app.Use(middleware.RequestLogger(telem))
 
-	profilesGroup := app.Group("/api/profiles", middleware.RequireUserID())
-	profilesGroup.Get("/me", profileHandler.GetMe)
-	profilesGroup.Put("/me", profileHandler.UpsertMe)
-	profilesGroup.Get("/:user_id", profileHandler.GetByID)
+	app.Get("/users/:user_id/profile", profileHandler.Get)
+	app.Put("/users/:user_id/profile", profileHandler.Upsert)
 
-	orgProjects := app.Group(
-		"/api/organizations/:organization_id/projects",
-		middleware.RequireOrg(),
-	)
-	orgProjects.Get("/", projectHandler.List)
-	orgProjects.Post("/", projectHandler.Create)
-	orgProjects.Get("/:project_id", projectHandler.Get)
-	orgProjects.Patch("/:project_id", projectHandler.Update)
-	orgProjects.Delete("/:project_id", projectHandler.Delete)
+	memberProjects := app.Group("/organizations/:organization_id/members/:member_id/projects")
+	memberProjects.Get("/", projectHandler.List)
+	memberProjects.Post("/", projectHandler.Create)
+	memberProjects.Get("/:project_id", projectHandler.Get)
+	memberProjects.Patch("/:project_id", projectHandler.Update)
+	memberProjects.Delete("/:project_id", projectHandler.Delete)
 
-	orgTasks := app.Group(
-		"/api/organizations/:organization_id/projects/:project_id/tasks",
-		middleware.RequireOrg(),
-	)
-	orgTasks.Get("/", taskHandler.List)
-	orgTasks.Post("/", taskHandler.Create)
-	orgTasks.Get("/:task_id", taskHandler.Get)
-	orgTasks.Patch("/:task_id", taskHandler.Update)
-	orgTasks.Delete("/:task_id", taskHandler.Delete)
+	memberTasks := app.Group("/organizations/:organization_id/members/:member_id/projects/:project_id/tasks")
+	memberTasks.Get("/", taskHandler.List)
+	memberTasks.Post("/", taskHandler.Create)
+	memberTasks.Get("/:task_id", taskHandler.Get)
+	memberTasks.Patch("/:task_id", taskHandler.Update)
+	memberTasks.Delete("/:task_id", taskHandler.Delete)
 
 	port := os.Getenv("PORT")
 	if port == "" {

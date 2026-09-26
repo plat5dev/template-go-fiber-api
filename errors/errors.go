@@ -168,8 +168,7 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 		case fiber.StatusBadRequest:
 			apiErr = ValidationError(e.Message, nil)
 		case fiber.StatusUnauthorized:
-			// Downstream services must not return UNAUTHORIZED (401).
-			// Per gateway-contract.md, missing auth context is a gateway bug => INTERNAL_ERROR (500).
+			// Authn is the gateway. This service does not return 401.
 			apiErr = InternalError()
 		case fiber.StatusNotFound:
 			apiErr = NotFoundError("resource", nil)
