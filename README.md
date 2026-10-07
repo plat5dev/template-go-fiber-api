@@ -122,6 +122,7 @@ telemetry/           # OTel init (exporter matrix)
 profiles|projects|tasks/
 routes.identity.yml  # identity public surface (edit or omit)
 routes.yml           # app routes (edge path + upstream)
+roles.yml            # roles → labels (member gets projects:write)
 plat5.template.yml   # CLI init metadata
 ```
 

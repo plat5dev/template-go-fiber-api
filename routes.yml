@@ -6,17 +6,34 @@ services:
         - path: /user/profile
           upstream: /users/{subject.user_id}/profile
           methods: [GET, PUT]
+    # Writes need projects:write. roles.yml grants it to members; a key can narrow it away.
     member:
       routes:
         - path: /member/projects
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects
-          methods: [GET, POST]
+          methods:
+            GET:
+            POST:
+              required_scopes: [projects:write]
         - path: /member/projects/{project_id}
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}
-          methods: [GET, PATCH, DELETE]
+          methods:
+            GET:
+            PATCH:
+              required_scopes: [projects:write]
+            DELETE:
+              required_scopes: [projects:write]
         - path: /member/projects/{project_id}/tasks
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks
-          methods: [GET, POST]
+          methods:
+            GET:
+            POST:
+              required_scopes: [projects:write]
         - path: /member/projects/{project_id}/tasks/{task_id}
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks/{path.task_id}
-          methods: [GET, PATCH, DELETE]
+          methods:
+            GET:
+            PATCH:
+              required_scopes: [projects:write]
+            DELETE:
+              required_scopes: [projects:write]
