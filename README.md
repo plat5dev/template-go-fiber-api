@@ -76,9 +76,10 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `DATABASE_PATH` | `./data/app.db` | SQLite file |
 | `OTEL_SERVICE_NAME` | `api` | Resource `service.name` |
 | `OTEL_SERVICE_NAMESPACE` | `api` | Resource `service.namespace` |
-| `OTEL_SERVICE_VERSION` | `0.0.0` / `CI_COMMIT_TAG` | Resource `service.version` |
-| `OTEL_SERVICE_INSTANCE_ID` | hostname / local | Resource `service.instance.id` |
-| `DEPLOYMENT_ENV` / `OTEL_DEPLOYMENT_ENV` | `development` | Resource `deployment.environment` |
+| `OTEL_SERVICE_VERSION` | `CI_COMMIT_TAG`, else `0.0.0` | Resource `service.version` |
+| `OTEL_SERVICE_INSTANCE_ID` | `$HOSTNAME`, else `api-local` | Resource `service.instance.id` |
+| `DEPLOYMENT_ENV` / `OTEL_DEPLOYMENT_ENV` | `development` | Resource `deployment.environment` (`OTEL_DEPLOYMENT_ENV` wins) |
+| `OTEL_RESOURCE_ATTRIBUTES` | unset | Standard bag: `service.namespace=…,service.version=…,…` (vars above win) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP base URL. Unset → no OTLP |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | unset | Optional full traces URL |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | unset | Optional full metrics URL |
@@ -90,7 +91,7 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 
 ## Telemetry
 
-Contract: Plat5 [`docs/telemetry.md`](../../docs/telemetry.md).
+Contract: Plat5 [`docs/telemetry.md`](https://github.com/plat5dev/plat5/blob/master/docs/telemetry.md).
 
 | Signal | Path |
 |--------|------|
