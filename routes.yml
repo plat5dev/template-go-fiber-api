@@ -14,26 +14,26 @@ services:
           methods:
             GET:
             POST:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]
         - path: /member/projects/{project_id}
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}
           methods:
             GET:
             PATCH:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]
             DELETE:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]
         - path: /member/projects/{project_id}/tasks
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks
           methods:
             GET:
             POST:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]
         - path: /member/projects/{project_id}/tasks/{task_id}
           upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks/{path.task_id}
           methods:
             GET:
             PATCH:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]
             DELETE:
-              required_scopes: [projects:write]
+              required_labels: [projects:write]

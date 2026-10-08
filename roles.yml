@@ -1,6 +1,6 @@
 # Roles for this app (Plat5 docs/roles.md). Plat5 names no roles: rename, add,
 # or replace these. Each role grants labels; routes require them
-# (required_scopes in routes.yml and routes.identity.yml). ["*"] grants every label.
+# (required_labels in routes.yml and routes.identity.yml). ["*"] grants every label.
 # plat5 start restarts identity when this file changes.
 roles:
   owner: ["*"]
