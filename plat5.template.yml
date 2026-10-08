@@ -6,6 +6,7 @@ upstreams:
 
 routes:
   - ./routes.identity.yml
+  - ./routes.audit.yml
   - ./routes.yml
 
 substitute:
