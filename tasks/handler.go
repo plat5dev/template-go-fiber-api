@@ -60,7 +60,6 @@ func (h *Handler) List(c fiber.Ctx) error {
 
 func (h *Handler) Create(c fiber.Ctx) error {
 	orgID := c.Params("organization_id")
-	memberID := c.Params("member_id")
 	projectID := c.Params("project_id")
 	if err := h.requireProject(c, orgID, projectID); err != nil {
 		return err
@@ -82,14 +81,13 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	t := &Task{
-		ID:                ulid.Make().String(),
-		OrganizationID:    orgID,
-		ProjectID:         projectID,
-		Title:             title,
-		Status:            status,
-		CreatedByMemberID: memberID,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:             ulid.Make().String(),
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		Title:          title,
+		Status:         status,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := h.store.Insert(c.Context(), t); err != nil {
 		return errors.InternalError()

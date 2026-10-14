@@ -23,12 +23,12 @@ This process listens on the rewritten path.
 | Resource | Scope | Credential | Edge | Listen path |
 |----------|-------|------------|------|-------------|
 | Profiles | `user` | user JWT or user API key | `/user/profile` | `/users/{user_id}/profile` |
-| Projects | `member` | member key or member session | `/member/projects` | `/organizations/{organization_id}/members/{member_id}/projects` |
-| Tasks | `member` | member key or member session | `/member/projects/{project_id}/tasks` | `.../projects/{project_id}/tasks` |
+| Projects | `organization` | member key or member session | `/org/projects` | `/organizations/{organization_id}/projects` |
+| Tasks | `organization` | member key or member session | `/org/projects/{project_id}/tasks` | `.../projects/{project_id}/tasks` |
 
 `GET` and `PUT` on the profile. Projects and tasks: `GET` and `POST` on the collection; `GET`, `PATCH`, and `DELETE` on `{project_id}` / `{task_id}`.
 
-Profiles are the caller's. Projects and tasks record `created_by_member_id`. Member scope is a member key or member session, not a user JWT. Handlers read `user_id`, `organization_id`, and `member_id` from those path params.
+Profiles are the person's. Projects and tasks are the org's: they store the owner, not who made them (the org's audit log records who did what). Organization scope is a member key or member session, not a user JWT. Handlers read `user_id` and `organization_id` from those path params.
 
 ## Quick start (host app + Plat5 CLI)
 
@@ -121,7 +121,7 @@ middleware/          # request logger
 telemetry/           # OTel init (exporter matrix)
 profiles|projects|tasks/
 routes.identity.yml  # identity public surface (edit or omit)
-routes.audit.yml     # GET /org/audit-events (omit with AUDIT_ENABLED=false)
+routes.audit.yml     # GET /org/audit-events, /user/audit-events (omit with AUDIT_ENABLED=false)
 routes.yml           # app routes (edge path + upstream)
 roles.yml            # roles → labels (member gets projects:write)
 plat5.template.yml   # CLI init metadata

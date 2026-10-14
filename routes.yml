@@ -6,31 +6,31 @@ services:
         - path: /user/profile
           upstream: /users/{subject.user_id}/profile
           methods: [GET, PUT]
-    # Writes need projects:write. roles.yml grants it to members; a key can narrow it away.
-    member:
+    # Projects belong to the org. Writes need projects:write; roles.yml grants it to members.
+    organization:
       routes:
-        - path: /member/projects
-          upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects
+        - path: /org/projects
+          upstream: /organizations/{subject.organization_id}/projects
           methods:
             GET:
             POST:
               required_labels: [projects:write]
-        - path: /member/projects/{project_id}
-          upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}
+        - path: /org/projects/{project_id}
+          upstream: /organizations/{subject.organization_id}/projects/{path.project_id}
           methods:
             GET:
             PATCH:
               required_labels: [projects:write]
             DELETE:
               required_labels: [projects:write]
-        - path: /member/projects/{project_id}/tasks
-          upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks
+        - path: /org/projects/{project_id}/tasks
+          upstream: /organizations/{subject.organization_id}/projects/{path.project_id}/tasks
           methods:
             GET:
             POST:
               required_labels: [projects:write]
-        - path: /member/projects/{project_id}/tasks/{task_id}
-          upstream: /organizations/{subject.organization_id}/members/{subject.member_id}/projects/{path.project_id}/tasks/{path.task_id}
+        - path: /org/projects/{project_id}/tasks/{task_id}
+          upstream: /organizations/{subject.organization_id}/projects/{path.project_id}/tasks/{path.task_id}
           methods:
             GET:
             PATCH:

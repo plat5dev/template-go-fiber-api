@@ -9,7 +9,7 @@ auth:
 
 admin_token: dev-admin-token
 
-# API key brand (identity + gateway). Unset → plat5. Keys {brand}-sk-1- / {brand}-mk-1-
+# Credential brand (identity). Unset → plat5. Keys {brand}-k-2-, sessions {brand}-s-2-
 # apikey_brand: plat5
 
 upstreams:

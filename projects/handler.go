@@ -41,7 +41,6 @@ func (h *Handler) List(c fiber.Ctx) error {
 
 func (h *Handler) Create(c fiber.Ctx) error {
 	orgID := c.Params("organization_id")
-	memberID := c.Params("member_id")
 	var body createBody
 	if err := c.Bind().Body(&body); err != nil {
 		return errors.ValidationError("Request validation failed", nil)
@@ -59,13 +58,12 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	p := &Project{
-		ID:                ulid.Make().String(),
-		OrganizationID:    orgID,
-		Name:              name,
-		Description:       desc,
-		CreatedByMemberID: memberID,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:             ulid.Make().String(),
+		OrganizationID: orgID,
+		Name:           name,
+		Description:    desc,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := h.store.Insert(c.Context(), p); err != nil {
 		return errors.InternalError()
