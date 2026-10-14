@@ -1,7 +1,8 @@
 # Roles for this app (Plat5 docs/roles.md). Plat5 names no roles: rename, add,
 # or replace these. Each role grants labels; routes require them
 # (required_labels in routes.yml, routes.identity.yml, and routes.audit.yml).
-# ["*"] grants every label. plat5 start restarts identity when this file changes.
+# ["*"] grants every label. plat5 start (or plat5 roles apply) writes this file
+# to the control plane; identity picks up changes without a restart.
 roles:
   owner: ["*"]
   admin: [org:write, org:members:write, org:service-accounts:write, org:audit:read, projects:write]

@@ -42,6 +42,9 @@ func (e *ApiError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
+// FallbackValidation is the 422 sentence when nothing more specific applies.
+const FallbackValidation = "That doesn't look right."
+
 // Common error constructors
 
 func ValidationError(message string, details interface{}) *ApiError {
@@ -52,6 +55,16 @@ func ValidationError(message string, details interface{}) *ApiError {
 		Details: details,
 		Status:  fiber.StatusUnprocessableEntity,
 	}
+}
+
+// FieldError is a 422 for one field. An empty message is the fallback sentence.
+func FieldError(path, message string) *ApiError {
+	if message == "" {
+		message = FallbackValidation
+	}
+	return ValidationError(message, map[string]interface{}{
+		"fields": []map[string]string{{"path": path, "message": message}},
+	})
 }
 
 func NotFoundError(resource string, id interface{}) *ApiError {

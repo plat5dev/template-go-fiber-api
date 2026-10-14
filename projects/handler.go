@@ -7,7 +7,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/oklog/ulid/v2"
 
+	"github.com/example/go-fiber-api/audit"
 	"github.com/example/go-fiber-api/errors"
+	"github.com/example/go-fiber-api/pagination"
 	"github.com/example/go-fiber-api/telemetry"
 )
 
@@ -32,11 +34,15 @@ type updateBody struct {
 
 func (h *Handler) List(c fiber.Ctx) error {
 	orgID := c.Params("organization_id")
-	list, err := h.store.ListByOrg(c.Context(), orgID)
+	page, err := pagination.Parse(c)
+	if err != nil {
+		return err
+	}
+	list, more, err := h.store.ListByOrg(c.Context(), orgID, page)
 	if err != nil {
 		return errors.InternalError()
 	}
-	return c.JSON(fiber.Map{"projects": list})
+	return c.JSON(fiber.Map{"projects": list, "has_more": more})
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
@@ -68,6 +74,8 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err := h.store.Insert(c.Context(), p); err != nil {
 		return errors.InternalError()
 	}
+	audit.Set(c, audit.Details{"project_id": p.ID, "name": p.Name})
+	audit.SetCreated(c, p.ID)
 	return c.Status(fiber.StatusCreated).JSON(p)
 }
 
@@ -98,6 +106,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if p == nil {
 		return errors.NotFoundError("project", projectID)
 	}
+	before := *p
 	if body.Name != nil {
 		name := strings.TrimSpace(*body.Name)
 		if name == "" || len(name) > 255 {
@@ -115,6 +124,10 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err := h.store.Update(c.Context(), p); err != nil {
 		return errors.InternalError()
 	}
+	changes := audit.Details{}
+	changes.Changed("name", before.Name, p.Name)
+	changes.Changed("description", before.Description, p.Description)
+	audit.Set(c, changes)
 	return c.JSON(p)
 }
 
@@ -131,5 +144,6 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.store.Delete(c.Context(), orgID, projectID); err != nil {
 		return errors.InternalError()
 	}
+	// No audit details: the route and the project id in its path say what happened.
 	return c.SendStatus(fiber.StatusNoContent)
 }

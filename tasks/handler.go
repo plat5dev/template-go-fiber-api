@@ -7,7 +7,9 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/oklog/ulid/v2"
 
+	"github.com/example/go-fiber-api/audit"
 	"github.com/example/go-fiber-api/errors"
+	"github.com/example/go-fiber-api/pagination"
 	"github.com/example/go-fiber-api/projects"
 	"github.com/example/go-fiber-api/telemetry"
 )
@@ -51,11 +53,15 @@ func (h *Handler) List(c fiber.Ctx) error {
 	if err := h.requireProject(c, orgID, projectID); err != nil {
 		return err
 	}
-	list, err := h.store.ListByProject(c.Context(), orgID, projectID)
+	page, err := pagination.Parse(c)
+	if err != nil {
+		return err
+	}
+	list, more, err := h.store.ListByProject(c.Context(), orgID, projectID, page)
 	if err != nil {
 		return errors.InternalError()
 	}
-	return c.JSON(fiber.Map{"tasks": list})
+	return c.JSON(fiber.Map{"tasks": list, "has_more": more})
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
@@ -92,6 +98,8 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	if err := h.store.Insert(c.Context(), t); err != nil {
 		return errors.InternalError()
 	}
+	audit.Set(c, audit.Details{"task_id": t.ID, "title": t.Title, "status": t.Status})
+	audit.SetCreated(c, t.ID)
 	return c.Status(fiber.StatusCreated).JSON(t)
 }
 
@@ -130,6 +138,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if t == nil {
 		return errors.NotFoundError("task", taskID)
 	}
+	before := *t
 	if body.Title != nil {
 		title := strings.TrimSpace(*body.Title)
 		if title == "" || len(title) > 255 {
@@ -147,6 +156,10 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err := h.store.Update(c.Context(), t); err != nil {
 		return errors.InternalError()
 	}
+	changes := audit.Details{}
+	changes.Changed("title", before.Title, t.Title)
+	changes.Changed("status", before.Status, t.Status)
+	audit.Set(c, changes)
 	return c.JSON(t)
 }
 
@@ -167,5 +180,6 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if err := h.store.Delete(c.Context(), orgID, projectID, taskID); err != nil {
 		return errors.InternalError()
 	}
+	// No audit details: the route and the task id in its path say what happened.
 	return c.SendStatus(fiber.StatusNoContent)
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/example/go-fiber-api/metrics"
+	"github.com/example/go-fiber-api/pagination"
 )
 
 type Task struct {
@@ -26,15 +27,16 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-func (s *Store) ListByProject(ctx context.Context, orgID, projectID string) ([]Task, error) {
+// ListByProject returns one page of the project's tasks in id order, and whether there are more.
+func (s *Store) ListByProject(ctx context.Context, orgID, projectID string, page pagination.Page) ([]Task, bool, error) {
 	start := time.Now()
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, organization_id, project_id, title, status, created_at, updated_at
-		FROM tasks WHERE organization_id = ? AND project_id = ? ORDER BY created_at DESC`,
-		orgID, projectID)
+		FROM tasks WHERE organization_id = ? AND project_id = ? AND id > ? ORDER BY id LIMIT ?`,
+		orgID, projectID, page.StartingAfter, page.Limit+1)
 	metrics.RecordDBOperation("tasks.list", time.Since(start), err)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -42,11 +44,15 @@ func (s *Store) ListByProject(ctx context.Context, orgID, projectID string) ([]T
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(&t.ID, &t.OrganizationID, &t.ProjectID, &t.Title, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	out, hasMore := pagination.Trim(out, page)
+	return out, hasMore, nil
 }
 
 func (s *Store) FindInProject(ctx context.Context, orgID, projectID, taskID string) (*Task, error) {
