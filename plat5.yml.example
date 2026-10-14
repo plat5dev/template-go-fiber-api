@@ -1,21 +1,27 @@
+# What plat5 init writes for this starter (versions are the latest tags at the time).
 project_id: my-app
 
-# Path mode until managed images ship. Accepts monorepo root, product root, or compose dir.
-plat5_compose: /path/to/plat5
-# auth_compose: /path/to/plat5
+versions:
+  plat5: v0.7.0
+  auth: v0.2.0
+  operator: v0.4.0
+  operator_console: v0.1.0
 
-auth:
-  enabled: false
+modules:
+  auth: true
+  operator: true
+  observability: true
 
-admin_token: dev-admin-token
-
-# Credential brand (identity). Unset → plat5. Keys {brand}-k-2-, sessions {brand}-s-2-
-# apikey_brand: plat5
+app:
+  compose: ./docker-compose.yml
+  web: http://localhost:3001
 
 upstreams:
-  api: 3000
+  api: "3000"
 
 routes:
   - ./routes.identity.yml
   - ./routes.audit.yml
   - ./routes.yml
+
+roles: ./roles.yml

@@ -12,6 +12,13 @@ routes:
 substitute:
   - go.mod
 
+# plat5 start runs the API and the starter web app from this compose file. The web
+# app's origin is allowed to sign in with local Auth.
+app:
+  compose: docker-compose.yml
+  web: http://localhost:3001
+
+# To run the API on your own machine instead: plat5 start -x app, then
 next:
   - go mod tidy
   - go run .
