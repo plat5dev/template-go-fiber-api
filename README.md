@@ -4,6 +4,8 @@ Reference Plat5 business service: **Go** + **Fiber v3**, SQLite (`modernc.org/sq
 
 Gateway admits the caller and fills `{subject.*}` into `upstream`. This service trusts that path and owns business logic only. It does not parse `Authorization` or `X-API-Key`, and it does not read identity from headers.
 
+That trust is the security model: **nothing but the gateway may reach this service.** Anyone who can call it directly can name any org in the path. Locally, `plat5 start` puts the container on the Plat5 network, the gateway calls it as `http://api:3000`, and the host port is bound to `127.0.0.1` for your own curls. In production, don't publish the port at all.
+
 ## Stack
 
 | Piece | Choice |
