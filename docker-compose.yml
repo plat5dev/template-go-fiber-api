@@ -45,7 +45,7 @@ services:
   # one frontend serves them all. It talks to Plat5 from the browser; plat5 start
   # passes where Plat5 is. A starter with its own frontend runs that here instead.
   web:
-    image: ghcr.io/plat5dev/template-web:v0.1.0
+    image: ghcr.io/plat5dev/template-web:v0.1.1
     labels:
       service.name: web
       service.namespace: api
