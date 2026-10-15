@@ -167,19 +167,15 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 	case *ApiError:
 		apiErr = e
 	case *fiber.BindError:
-		// v3 structured binding errors — map to VALIDATION_ERROR with field details.
-		details := map[string]interface{}{
-			"fields": []map[string]string{
-				{"path": e.Field, "message": e.Err.Error()},
-			},
-		}
-		apiErr = ValidationError("Request validation failed", details)
+		// v3 structured binding errors. The binder's own text is not product copy
+		// (docs/error-copy.md): name the field, with the fallback sentence.
+		apiErr = FieldError(e.Field, "")
 	case *fiber.Error:
 		// Fiber's built-in errors (e.g., from c.Status().SendString())
 		// Map common codes to our standard errors.
 		switch e.Code {
 		case fiber.StatusBadRequest:
-			apiErr = ValidationError(e.Message, nil)
+			apiErr = FieldError("body", "")
 		case fiber.StatusUnauthorized:
 			// Authn is the gateway. This service does not return 401.
 			apiErr = InternalError()

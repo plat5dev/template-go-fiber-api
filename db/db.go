@@ -42,7 +42,6 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS profiles (
 			user_id TEXT PRIMARY KEY NOT NULL,
-			display_name TEXT NOT NULL,
 			bio TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -72,6 +71,18 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+	}
+	// Profiles had their own display_name; the person's name is identity's now.
+	var hasName int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('profiles') WHERE name = 'display_name'`,
+	).Scan(&hasName); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if hasName > 0 {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE profiles DROP COLUMN display_name`); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}

@@ -9,11 +9,10 @@ import (
 )
 
 type Profile struct {
-	UserID      string `json:"user_id"`
-	DisplayName string `json:"display_name"`
-	Bio         string `json:"bio"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	UserID    string `json:"user_id"`
+	Bio       string `json:"bio"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type Store struct {
@@ -27,10 +26,10 @@ func NewStore(db *sql.DB) *Store {
 func (s *Store) FindByUserID(ctx context.Context, userID string) (*Profile, error) {
 	start := time.Now()
 	row := s.db.QueryRowContext(ctx, `
-		SELECT user_id, display_name, bio, created_at, updated_at
+		SELECT user_id, bio, created_at, updated_at
 		FROM profiles WHERE user_id = ?`, userID)
 	var p Profile
-	err := row.Scan(&p.UserID, &p.DisplayName, &p.Bio, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.UserID, &p.Bio, &p.CreatedAt, &p.UpdatedAt)
 	metrics.RecordDBOperation("profiles.find", time.Since(start), err)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -44,9 +43,9 @@ func (s *Store) FindByUserID(ctx context.Context, userID string) (*Profile, erro
 func (s *Store) Insert(ctx context.Context, p *Profile) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO profiles (user_id, display_name, bio, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		p.UserID, p.DisplayName, p.Bio, p.CreatedAt, p.UpdatedAt)
+		INSERT INTO profiles (user_id, bio, created_at, updated_at)
+		VALUES (?, ?, ?, ?)`,
+		p.UserID, p.Bio, p.CreatedAt, p.UpdatedAt)
 	metrics.RecordDBOperation("profiles.insert", time.Since(start), err)
 	return err
 }
@@ -54,9 +53,9 @@ func (s *Store) Insert(ctx context.Context, p *Profile) error {
 func (s *Store) Update(ctx context.Context, p *Profile) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE profiles SET display_name = ?, bio = ?, updated_at = ?
+		UPDATE profiles SET bio = ?, updated_at = ?
 		WHERE user_id = ?`,
-		p.DisplayName, p.Bio, p.UpdatedAt, p.UserID)
+		p.Bio, p.UpdatedAt, p.UserID)
 	metrics.RecordDBOperation("profiles.update", time.Since(start), err)
 	return err
 }

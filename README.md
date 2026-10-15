@@ -30,7 +30,32 @@ This process listens on the rewritten path.
 
 `GET` and `PUT` on the profile. Projects and tasks: `GET` and `POST` on the collection; `GET`, `PATCH`, and `DELETE` on `{project_id}` / `{task_id}`.
 
-Profiles are the person's. Projects and tasks are the org's: they store the owner, not who made them (the org's audit log records who did what). Organization scope is a member key or member session, not a user JWT. Handlers read `user_id` and `organization_id` from those path params.
+Profiles are the person's: this app's data about them, keyed by the directory id. The person's name is identity's (`GET /user`), not this app's. Projects and tasks are the org's: they store the owner, not who made them (the org's audit log records who did what). Organization scope is a member key or member session, not a user JWT. Handlers read `user_id` and `organization_id` from those path params.
+
+## Build your first feature
+
+A `GET /org/stats` for the caller's org, end to end. About ten minutes, no restart.
+
+**1. Add the handler.** A package `stats/` with a handler on `/organizations/:organization_id/stats`, registered in `main.go` beside the projects group (copy `projects/`). Read `c.Params("organization_id")`. Don't check who called: the gateway did, and the path is the answer.
+
+**2. Route it.** Add the edge path to `routes.yml`, under the `api` service's `organization` routes. `{subject.organization_id}` is filled from the caller's credential, never from the client:
+
+```yaml
+        - path: /org/stats
+          upstream: /organizations/{subject.organization_id}/stats
+          methods: [GET]
+          required_labels: [stats:read]   # step 3; leave it out for any member
+```
+
+**3. Require a permission.** `required_labels` names the label; grant it to roles in `roles.yml` (`admin: [..., stats:read]`). A role with `"*"` holds every label. `plat5 start` and `plat5 roles apply` list labels no role grants by name, which is how a typo (`stats:raed`) shows up.
+
+**4. Apply.** `plat5 routes apply && plat5 roles apply`, or `plat5 start`. Neither restarts anything.
+
+**5. Call it.** With the member key from `plat5 status`: `curl localhost:5400/org/stats -H "X-API-Key: …"`. With a key whose role lacks the label: **403** `FORBIDDEN`, naming `required_labels`. With a user key: **401**, saying the route takes a member credential.
+
+**6. Writes: say what changed.** For a `POST`, `PATCH`, or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)). The event shows up in the console's org audit log, and on the demo app's Audit log page.
+
+**7. Optional: let staff see it.** Add the listen path to an operator route list and point `operator.routes` at it in `plat5.yml` (cli README, "Operator routes").
 
 ## Lists
 
@@ -52,7 +77,7 @@ The gateway records each write before it reaches this service. Each write says w
 | `PATCH` a project | `name`, `description` as changes |
 | `POST` tasks | `task_id`, `title`, `status`. Created: the task id |
 | `PATCH` a task | `title`, `status` as changes |
-| `PUT` the profile | `display_name`, `bio` as changes |
+| `PUT` the profile | `bio` as a change |
 | `DELETE` | None: the route and its path say what happened |
 
 A change is `{"from": …, "to": …}`, only for fields that changed; a write that changed nothing sends no header. Never put a secret in either header.

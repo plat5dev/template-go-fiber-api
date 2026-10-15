@@ -72,16 +72,19 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	var body createBody
 	if err := c.Bind().Body(&body); err != nil {
-		return errors.ValidationError("Request validation failed", nil)
+		return errors.FieldError("body", "")
 	}
 	title := strings.TrimSpace(body.Title)
-	if title == "" || len(title) > 255 {
-		return errors.ValidationError("title is required (max 255)", nil)
+	if title == "" {
+		return errors.FieldError("title", "Title is required.")
+	}
+	if len(title) > 255 {
+		return errors.FieldError("title", "Title is too long.")
 	}
 	status := "todo"
 	if body.Status != nil {
 		if !validStatus[*body.Status] {
-			return errors.ValidationError("status must be todo|in_progress|done", nil)
+			return errors.FieldError("status", "Status must be todo, in progress, or done.")
 		}
 		status = *body.Status
 	}
@@ -129,7 +132,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	}
 	var body updateBody
 	if err := c.Bind().Body(&body); err != nil {
-		return errors.ValidationError("Request validation failed", nil)
+		return errors.FieldError("body", "")
 	}
 	t, err := h.store.FindInProject(c.Context(), orgID, projectID, taskID)
 	if err != nil {
@@ -141,14 +144,17 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	before := *t
 	if body.Title != nil {
 		title := strings.TrimSpace(*body.Title)
-		if title == "" || len(title) > 255 {
-			return errors.ValidationError("title max 255", nil)
+		if title == "" {
+			return errors.FieldError("title", "Title is required.")
+		}
+		if len(title) > 255 {
+			return errors.FieldError("title", "Title is too long.")
 		}
 		t.Title = title
 	}
 	if body.Status != nil {
 		if !validStatus[*body.Status] {
-			return errors.ValidationError("status must be todo|in_progress|done", nil)
+			return errors.FieldError("status", "Status must be todo, in progress, or done.")
 		}
 		t.Status = *body.Status
 	}

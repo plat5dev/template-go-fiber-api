@@ -49,16 +49,19 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	orgID := c.Params("organization_id")
 	var body createBody
 	if err := c.Bind().Body(&body); err != nil {
-		return errors.ValidationError("Request validation failed", nil)
+		return errors.FieldError("body", "")
 	}
 	name := strings.TrimSpace(body.Name)
-	if name == "" || len(name) > 255 {
-		return errors.ValidationError("name is required (max 255)", nil)
+	if name == "" {
+		return errors.FieldError("name", "Name is required.")
+	}
+	if len(name) > 255 {
+		return errors.FieldError("name", "Name is too long.")
 	}
 	desc := ""
 	if body.Description != nil {
 		if len(*body.Description) > 2000 {
-			return errors.ValidationError("description max 2000", nil)
+			return errors.FieldError("description", "Description is too long.")
 		}
 		desc = *body.Description
 	}
@@ -97,7 +100,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	projectID := c.Params("project_id")
 	var body updateBody
 	if err := c.Bind().Body(&body); err != nil {
-		return errors.ValidationError("Request validation failed", nil)
+		return errors.FieldError("body", "")
 	}
 	p, err := h.store.FindInOrg(c.Context(), orgID, projectID)
 	if err != nil {
@@ -109,14 +112,17 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	before := *p
 	if body.Name != nil {
 		name := strings.TrimSpace(*body.Name)
-		if name == "" || len(name) > 255 {
-			return errors.ValidationError("name max 255", nil)
+		if name == "" {
+			return errors.FieldError("name", "Name is required.")
+		}
+		if len(name) > 255 {
+			return errors.FieldError("name", "Name is too long.")
 		}
 		p.Name = name
 	}
 	if body.Description != nil {
 		if len(*body.Description) > 2000 {
-			return errors.ValidationError("description max 2000", nil)
+			return errors.FieldError("description", "Description is too long.")
 		}
 		p.Description = *body.Description
 	}
