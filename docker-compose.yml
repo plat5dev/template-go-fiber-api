@@ -41,27 +41,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # The starter web app: every starter shares its API (profiles, projects, tasks), so
-  # one frontend serves them all. It talks to Plat5 from the browser; plat5 start
-  # passes where Plat5 is. A starter with its own frontend runs that here instead.
-  web:
-    image: ghcr.io/plat5dev/template-web:v0.1.1
-    labels:
-      service.name: web
-      service.namespace: api
-    ports:
-      - "3001:8080"
-    environment:
-      GATEWAY_URL: ${PLAT5_GATEWAY_URL:-http://localhost:5400}
-      AUTH_ISSUER: ${PLAT5_AUTH_URL:-http://localhost:5401}
-      AUTH_CLIENT_ID: ${PLAT5_AUTH_CLIENT_ID:-plat5}
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/config.js"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-    restart: unless-stopped
-
 volumes:
   sqlite_data:
   go_mod_cache:

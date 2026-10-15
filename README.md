@@ -38,7 +38,7 @@ A `GET /org/stats` for the caller's org, end to end. About ten minutes, no resta
 
 **1. Add the handler.** A package `stats/` with a handler on `/organizations/:organization_id/stats`, registered in `main.go` beside the projects group (copy `projects/`). Read `c.Params("organization_id")`. Don't check who called: the gateway did, and the path is the answer.
 
-**2. Route it.** Add the edge path to `routes.yml`, under the `api` service's `organization` routes. `{subject.organization_id}` is filled from the caller's credential, never from the client:
+**2. Route it.** Add the edge path to the project's `routes.yml` (at the project root, beside `plat5.yml`), under the `api` service's `organization` routes. `{subject.organization_id}` is filled from the caller's credential, never from the client:
 
 ```yaml
         - path: /org/stats
@@ -47,7 +47,7 @@ A `GET /org/stats` for the caller's org, end to end. About ten minutes, no resta
           required_labels: [stats:read]   # step 3; leave it out for any member
 ```
 
-**3. Require a permission.** `required_labels` names the label; grant it to roles in `roles.yml` (`admin: [..., stats:read]`). A role with `"*"` holds every label. `plat5 start` and `plat5 roles apply` list labels no role grants by name, which is how a typo (`stats:raed`) shows up.
+**3. Require a permission.** `required_labels` names the label; grant it to roles in the project's `roles.yml` (`admin: [..., stats:read]`). A role with `"*"` holds every label. `plat5 start`, `plat5 routes apply`, and `plat5 roles apply` warn when a label in a route and one in a role are a letter or two apart, so a typo (`stats:raed`) shows up on either side.
 
 **4. Apply.** `plat5 routes apply && plat5 roles apply`, or `plat5 start`. Neither restarts anything.
 
@@ -55,7 +55,7 @@ A `GET /org/stats` for the caller's org, end to end. About ten minutes, no resta
 
 **6. Writes: say what changed.** For a `POST`, `PATCH`, or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)). The event shows up in the console's org audit log, and on the demo app's Audit log page.
 
-**7. Optional: let staff see it.** Add the listen path to an operator route list and point `operator.routes` at it in `plat5.yml` (cli README, "Operator routes").
+**7. Optional: let staff see it.** In the project's `operator.routes.yml`, uncomment the `api` upstream and add the listen path (`/organizations/{organization_id}/stats`). `plat5 start` restarts the operator gateway with it, and the staff console can call it.
 
 ## Lists
 
@@ -90,17 +90,18 @@ cd my-app
 plat5 start
 ```
 
-You need Docker, nothing else. `plat5 start` runs Plat5, its modules, this API on `:3000`, and the starter web app on `:3001`, then prints every link, login, and a key to call the API with. Sign in to the web app as `dev@example.com` / `password`.
+You need Docker, nothing else. `plat5 init` puts this starter in the project's `api/` folder, beside a web app (`web/`) and a staff console (`console/`), and moves the route files and `roles.yml` up to the project root: they are the whole project's. `plat5 start` runs Plat5, its modules, and all three apps, then prints every link, login, and a key to call the API with. Sign in to the web app as `dev@example.com` / `password`. The project's `README.md` says how to extend each part.
 
-`plat5.template.yml` drives init: upstreams, routes, and `app:` (this compose file, and the web app's origin). The CLI fetches this repo, copies the tree, and writes `plat5.yml`.
+`plat5.template.yml` drives init: upstreams, routes, and this compose file.
 
-To run the API on your own machine instead (your debugger, your editor's runner):
+To run the API on your own machine instead (your debugger, your editor's runner), from `api/`:
 
 ```bash
 plat5 start -x app
-go mod tidy
-go run .           # API :3000, health :3001
+go run .
 ```
+
+`-x app` runs none of the project's apps; run the web app and console from their folders the same way, or leave them off.
 
 Community / fork:
 ```bash
@@ -180,10 +181,7 @@ metrics/             # Prometheus SoT
 middleware/          # request logger
 telemetry/           # OTel init (exporter matrix)
 profiles|projects|tasks/
-routes.identity.yml  # identity public surface (edit or omit)
-routes.audit.yml     # GET /org/audit-events, /user/audit-events (omit with AUDIT_ENABLED=false)
-routes.yml           # app routes (edge path + upstream)
-roles.yml            # roles → labels (member gets projects:write)
+../routes.yml, ../roles.yml  # at the project root: the gateway routes and the roles
 plat5.template.yml   # CLI init metadata
 ```
 

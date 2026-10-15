@@ -1,4 +1,5 @@
 name: go-fiber-api
+kind: api
 description: Go + Fiber reference API (profiles, projects, tasks)
 
 upstreams:
@@ -12,11 +13,11 @@ routes:
 substitute:
   - go.mod
 
-# plat5 start runs the API and the starter web app from this compose file. The web
-# app's origin is allowed to sign in with local Auth.
+# plat5 init copies this starter into a project's api/ folder, and moves the
+# route files and roles.yml up to the project root: they are the project's.
+# plat5 start runs the API from this compose file.
 app:
   compose: docker-compose.yml
-  web: http://localhost:3001
 
 # To run the API on your own machine instead: plat5 start -x app, then
 next:
