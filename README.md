@@ -53,9 +53,9 @@ A `GET /org/stats` for the caller's org, end to end. About ten minutes, no resta
 
 **5. Call it.** With the member key from `plat5 status`: `curl localhost:5400/org/stats -H "X-API-Key: …"`. With a key whose role lacks the label: **403** `FORBIDDEN`, naming `required_labels`. With a user key: **401**, saying the route takes a member credential.
 
-**6. Writes: say what changed.** For a `POST`, `PATCH`, or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)). The event shows up in the console's org audit log, and on the demo app's Audit log page.
+**6. Writes: say what changed.** For a `POST`, `PATCH`, or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)). The event shows up in the operator console's org audit log, and on the customer console's Audit log page.
 
-**7. Optional: let staff see it.** In the project's `operator.routes.yml`, uncomment the `api` upstream and add the listen path (`/organizations/{organization_id}/stats`). `plat5 start` restarts the operator gateway with it, and the staff console can call it.
+**7. Optional: let staff see it.** In the project's `operator.routes.yml`, add the listen path (`/organizations/{organization_id}/stats`) under the `api` upstream, beside the project routes `plat5 init` put there from `routes.operator.yml`. `plat5 start` restarts the operator gateway with it, and the operator console can call it.
 
 ## Lists
 
@@ -90,7 +90,7 @@ cd my-app
 plat5 start
 ```
 
-You need Docker, nothing else. `plat5 init` puts this starter in the project's `api/` folder, beside a web app (`web/`) and a staff console (`console/`), and moves the route files and `roles.yml` up to the project root: they are the whole project's. `plat5 start` runs Plat5, its modules, and all three apps, then prints every link, login, and a key to call the API with. Sign in to the web app as `dev@example.com` / `password`. The project's `README.md` says how to extend each part.
+You need Docker, nothing else. `plat5 init` puts this starter in the project's `api/` folder, beside a customer console (`customer-console/`) and an operator console (`operator-console/`), and moves the route files and `roles.yml` up to the project root: they are the whole project's. `routes.operator.yml` goes into the project's `operator.routes.yml`. `plat5 start` runs Plat5, its modules, and all three apps, then prints every link, login, and a key to call the API with. Sign in to the customer console as `dev@example.com` / `password`. The project's `README.md` says how to extend each part.
 
 `plat5.template.yml` drives init: upstreams, routes, and this compose file.
 
@@ -101,7 +101,7 @@ plat5 start -x app
 go run .
 ```
 
-`-x app` runs none of the project's apps; run the web app and console from their folders the same way, or leave them off.
+`-x app` runs none of the project's apps; run the two consoles from their folders the same way, or leave them off.
 
 Community / fork:
 ```bash

@@ -2,10 +2,9 @@
 project_id: my-app
 
 versions:
-  plat5: v0.7.0
-  auth: v0.2.0
-  operator: v0.4.0
-  operator_console: v0.1.0
+  plat5: v0.7.1
+  auth: v0.2.2
+  operator: v0.4.1
 
 modules:
   auth: true
@@ -14,7 +13,8 @@ modules:
 
 app:
   compose: ./docker-compose.yml
-  web: http://localhost:3001
+  web: "http://localhost:3001"               # customer-console/
+  operator_console: "http://localhost:5412"  # operator-console/
 
 upstreams:
   api: "3000"
@@ -25,3 +25,6 @@ routes:
   - ./routes.yml
 
 roles: ./roles.yml
+
+operator:
+  routes: ./operator.routes.yml              # with this starter's routes.operator.yml in it
