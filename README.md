@@ -39,6 +39,8 @@ Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 | `routes.operator.yml` | What the operator plane may call on this API: the read routes, by project id (operator `docs/reference/routes.md`) |
 | `plat5.template.yml` | The starter's manifest for `plat5 init`: its service file, operator routes, compose file and next steps |
 
+In a project made with `plat5 init --template go-fiber-api`, this API sits in `api/`, its service file is the project's `services/api.yml`, its operator routes are in the project's `operator.routes.yml`, and the project has its own `plat5.yml` and `plat5.dev.yml` at its root.
+
 ## What it trusts
 
 Only front doors may reach the API: Plat5's gateway, an operator plane, anything else on the private network. Anyone who can call it directly can name any project in the path. Locally, `plat5 start` puts the container on the Plat5 network, where the gateway calls it as `http://api:3000`, and the host port is bound to `127.0.0.1` for your own curls. In production, don't publish the port at all.
