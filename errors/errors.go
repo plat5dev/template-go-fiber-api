@@ -105,6 +105,9 @@ func ConflictError(field string, value interface{}) *ApiError {
 	}
 }
 
+// MaxBodyBytes is the largest request body the API reads: 1 MiB.
+const MaxBodyBytes = 1 << 20
+
 func PayloadTooLargeError(maxSizeBytes int64) *ApiError {
 	return &ApiError{
 		Type:    "invalid_request_error",
@@ -196,7 +199,7 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 		case fiber.StatusConflict:
 			apiErr = ConflictError("", nil)
 		case fiber.StatusRequestEntityTooLarge:
-			apiErr = PayloadTooLargeError(0)
+			apiErr = PayloadTooLargeError(MaxBodyBytes)
 		case fiber.StatusServiceUnavailable:
 			apiErr = ServiceUnavailableError()
 		default:

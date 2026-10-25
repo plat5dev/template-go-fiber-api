@@ -53,6 +53,7 @@ func main() {
 
 	app := fiber.New(fiber.Config{
 		AppName:      "api",
+		BodyLimit:    errors.MaxBodyBytes,
 		ErrorHandler: errors.FiberErrorHandler,
 	})
 
