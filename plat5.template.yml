@@ -10,9 +10,6 @@ service: services/api.yml
 # operator.routes.yml.
 operator_routes: ./routes.operator.yml
 
-substitute:
-  - go.mod
-
 # plat5 init copies this starter into a project's api/ folder. plat5 start
 # runs the API from this compose file.
 app:
