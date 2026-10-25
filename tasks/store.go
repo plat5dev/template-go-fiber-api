@@ -9,14 +9,16 @@ import (
 	"github.com/example/go-fiber-api/pagination"
 )
 
+// Task is authored data: CreatedBy is the member who made it, and stays theirs if they
+// leave the tree (plat5 docs/concepts/model.md#where-a-field-goes).
 type Task struct {
-	ID             string `json:"id"`
-	OrganizationID string `json:"organization_id"`
-	ProjectID      string `json:"project_id"`
-	Title          string `json:"title"`
-	Status         string `json:"status"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	CreatedBy string `json:"created_by"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 type Store struct {
@@ -27,13 +29,19 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+const columns = `id, project_id, title, status, created_by, created_at, updated_at`
+
+func scan(row interface{ Scan(...any) error }, t *Task) error {
+	return row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Status, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+}
+
 // ListByProject returns one page of the project's tasks in id order, and whether there are more.
-func (s *Store) ListByProject(ctx context.Context, orgID, projectID string, page pagination.Page) ([]Task, bool, error) {
+func (s *Store) ListByProject(ctx context.Context, projectID string, page pagination.Page) ([]Task, bool, error) {
 	start := time.Now()
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, organization_id, project_id, title, status, created_at, updated_at
-		FROM tasks WHERE organization_id = ? AND project_id = ? AND id > ? ORDER BY id LIMIT ?`,
-		orgID, projectID, page.StartingAfter, page.Limit+1)
+		SELECT `+columns+`
+		FROM tasks WHERE project_id = ? AND id > ? ORDER BY id LIMIT ?`,
+		projectID, page.StartingAfter, page.Limit+1)
 	metrics.RecordDBOperation("tasks.list", time.Since(start), err)
 	if err != nil {
 		return nil, false, err
@@ -43,7 +51,7 @@ func (s *Store) ListByProject(ctx context.Context, orgID, projectID string, page
 	out := make([]Task, 0)
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.OrganizationID, &t.ProjectID, &t.Title, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := scan(rows, &t); err != nil {
 			return nil, false, err
 		}
 		out = append(out, t)
@@ -55,14 +63,14 @@ func (s *Store) ListByProject(ctx context.Context, orgID, projectID string, page
 	return out, hasMore, nil
 }
 
-func (s *Store) FindInProject(ctx context.Context, orgID, projectID, taskID string) (*Task, error) {
+func (s *Store) FindInProject(ctx context.Context, projectID, taskID string) (*Task, error) {
 	start := time.Now()
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, organization_id, project_id, title, status, created_at, updated_at
-		FROM tasks WHERE id = ? AND organization_id = ? AND project_id = ?`,
-		taskID, orgID, projectID)
+		SELECT `+columns+`
+		FROM tasks WHERE id = ? AND project_id = ?`,
+		taskID, projectID)
 	var t Task
-	err := row.Scan(&t.ID, &t.OrganizationID, &t.ProjectID, &t.Title, &t.Status, &t.CreatedAt, &t.UpdatedAt)
+	err := scan(row, &t)
 	metrics.RecordDBOperation("tasks.find", time.Since(start), err)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -76,9 +84,9 @@ func (s *Store) FindInProject(ctx context.Context, orgID, projectID, taskID stri
 func (s *Store) Insert(ctx context.Context, t *Task) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks (id, organization_id, project_id, title, status, created_at, updated_at)
+		INSERT INTO tasks (`+columns+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.OrganizationID, t.ProjectID, t.Title, t.Status, t.CreatedAt, t.UpdatedAt)
+		t.ID, t.ProjectID, t.Title, t.Status, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
 	metrics.RecordDBOperation("tasks.insert", time.Since(start), err)
 	return err
 }
@@ -87,24 +95,26 @@ func (s *Store) Update(ctx context.Context, t *Task) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET title = ?, status = ?, updated_at = ?
-		WHERE id = ? AND organization_id = ? AND project_id = ?`,
-		t.Title, t.Status, t.UpdatedAt, t.ID, t.OrganizationID, t.ProjectID)
+		WHERE id = ? AND project_id = ?`,
+		t.Title, t.Status, t.UpdatedAt, t.ID, t.ProjectID)
 	metrics.RecordDBOperation("tasks.update", time.Since(start), err)
 	return err
 }
 
-func (s *Store) Delete(ctx context.Context, orgID, projectID, taskID string) error {
+func (s *Store) Delete(ctx context.Context, projectID, taskID string) error {
 	start := time.Now()
-	res, err := s.db.ExecContext(ctx, `
-		DELETE FROM tasks WHERE id = ? AND organization_id = ? AND project_id = ?`,
-		taskID, orgID, projectID)
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM tasks WHERE id = ? AND project_id = ?`,
+		taskID, projectID)
 	metrics.RecordDBOperation("tasks.delete", time.Since(start), err)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return err
+}
+
+// DeleteByProject deletes every task of a project, for its purge. Deleting none is fine,
+// so it can run again for the same project.
+func (s *Store) DeleteByProject(ctx context.Context, projectID string) error {
+	start := time.Now()
+	_, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE project_id = ?`, projectID)
+	metrics.RecordDBOperation("tasks.delete_by_project", time.Since(start), err)
+	return err
 }

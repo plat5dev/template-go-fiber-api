@@ -1,0 +1,37 @@
+# How plat5 start runs this project on your machine. A deployment never reads
+# it: the deployment's config is plat5.yml. See `plat5 start --help`.
+project_id: go-fiber-api
+cli: ">=0.8.0"  # the oldest plat5 CLI that reads this file
+
+# Image tags: the releases this starter runs on.
+versions:
+  plat5: v0.8.0
+  auth: v0.2.2
+
+# What plat5 start runs beside Plat5. plat5 start -x <module> skips one for a run.
+modules:
+  auth: true           # Plat5 Auth: sign-in for your users (dev mode)
+  observability: true  # Grafana with logs, traces, metrics
+
+# Your app. plat5 start runs it after Plat5 (-x app to run it yourself).
+# services/api.yml's url names its compose service (http://api:3000).
+app:
+  compose: ./docker-compose.yml
+
+# --- Optional ---
+# ports:                 # host ports (defaults: gateway 5400, auth 5401, control_plane 5402,
+#   gateway: 5400        #   grafana 5403, otlp_grpc 4317, otlp_http 4318)
+# admin_token: dev-admin-token
+# apikey_brand: plat5    # keys are {brand}-k-2-…
+# auth:                  # local Auth, beyond app.web
+#   clients: [plat5]
+#   origins: []
+#   redirect_uris: []
+#   theme_file: ./theme.json
+# idp:                   # with modules.auth off: your IdP
+#   issuer: https://idp.example.com
+#   jwks_uri: https://idp.example.com/.well-known/jwks.json
+#   audiences: [my-api]
+#   subject_claim: sub
+# otel:
+#   endpoint: http://host.docker.internal:4318   # your collector, instead of observability

@@ -23,6 +23,27 @@ func HTTPSpanName(c fiber.Ctx) string {
 	return method
 }
 
+type callerID struct {
+	field, value string
+}
+
+// callerIDs are the ids the front door gave this request (plat5 docs/reference/telemetry.md):
+// the user on a user route, the project node and the caller's member on a project route.
+// Log fields use them as named; span attributes add the plat5. prefix.
+func callerIDs(c fiber.Ctx) []callerID {
+	var ids []callerID
+	if v := c.Params("user_id"); v != "" {
+		ids = append(ids, callerID{"user_id", v})
+	}
+	if v := c.Params("project_id"); v != "" {
+		ids = append(ids, callerID{"node_id", v})
+	}
+	if v := c.Get("X-Plat5-Member-Id"); v != "" {
+		ids = append(ids, callerID{"member_id", v})
+	}
+	return ids
+}
+
 // RequestLogger logs requests and records HTTP metrics.
 func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -43,14 +64,8 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 		if requestID := c.Get("X-Request-ID"); requestID != "" {
 			span.SetAttributes(attribute.String("request_id", requestID))
 		}
-		if userID := c.Params("user_id"); userID != "" {
-			span.SetAttributes(attribute.String("user.id", userID))
-		}
-		if orgID := c.Params("organization_id"); orgID != "" {
-			span.SetAttributes(attribute.String("organization.id", orgID))
-		}
-		if memberID := c.Params("member_id"); memberID != "" {
-			span.SetAttributes(attribute.String("member.id", memberID))
+		for _, id := range callerIDs(c) {
+			span.SetAttributes(attribute.String("plat5."+id.field, id.value))
 		}
 		if status >= 500 {
 			kind := errors.KindInternal.String()
@@ -124,14 +139,8 @@ func buildRequestLogger(c fiber.Ctx, telem *telemetry.Telemetry, route string, s
 	if requestID := c.Get("X-Request-ID"); requestID != "" {
 		ctx = ctx.Str("request_id", requestID)
 	}
-	if userID := c.Params("user_id"); userID != "" {
-		ctx = ctx.Str("user_id", userID)
-	}
-	if orgID := c.Params("organization_id"); orgID != "" {
-		ctx = ctx.Str("organization_id", orgID)
-	}
-	if memberID := c.Params("member_id"); memberID != "" {
-		ctx = ctx.Str("member_id", memberID)
+	for _, id := range callerIDs(c) {
+		ctx = ctx.Str(id.field, id.value)
 	}
 
 	return ctx.Logger()

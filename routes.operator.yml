@@ -1,16 +1,19 @@
-# What staff may call on this API through the operator gateway (operator
-# docs/routes.md). plat5 init adds it to the project's operator.routes.yml, where
-# plat5.yml's upstreams.api says where the API is. The paths are the API's own: the
-# operator gateway forwards them unchanged, with the org in the path. Read-only;
-# add methods there for staff writes.
-upstreams:
+# What the operator plane may call on this API (operator
+# docs/reference/routes.md). plat5 init adds it to the project's
+# operator.routes.yml. The paths are the API's own, by node id: the operator
+# gateway forwards them unchanged. Read-only; add methods there for operator
+# writes. as_member also serves each route at /as/{member}, acting as that
+# member: a write there carries the X-Plat5-Member-Id the API needs to record
+# a task's author.
+services:
   api:
+    url: http://api:3000
     routes:
-      - path: /organizations/{organization_id}/projects
+      - path: /projects/{project_id}/tasks
+        node: project_id
+        as_member: true
         methods: [GET]
-      - path: /organizations/{organization_id}/projects/{project_id}
-        methods: [GET]
-      - path: /organizations/{organization_id}/projects/{project_id}/tasks
-        methods: [GET]
-      - path: /organizations/{organization_id}/projects/{project_id}/tasks/{task_id}
+      - path: /projects/{project_id}/tasks/{task_id}
+        node: project_id
+        as_member: true
         methods: [GET]

@@ -46,43 +46,25 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS projects (
-			id TEXT PRIMARY KEY NOT NULL,
-			organization_id TEXT NOT NULL,
-			name TEXT NOT NULL,
-			description TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS projects_organization_id_idx
-			ON projects (organization_id)`,
+		// A project is a Plat5 node: its tasks are keyed by its id, and go when it's purged.
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY NOT NULL,
-			organization_id TEXT NOT NULL,
 			project_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'todo',
+			created_by TEXT NOT NULL,
 			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS tasks_project_id_idx ON tasks (project_id)`,
-		`CREATE INDEX IF NOT EXISTS tasks_organization_id_idx ON tasks (organization_id)`,
+		// The last lifecycle event acted on: one row, an opaque decimal string.
+		`CREATE TABLE IF NOT EXISTS lifecycle_cursor (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			event_id TEXT NOT NULL
+		)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("migrate: %w", err)
-		}
-	}
-	// Profiles had their own display_name; the person's name is identity's now.
-	var hasName int
-	if err := db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM pragma_table_info('profiles') WHERE name = 'display_name'`,
-	).Scan(&hasName); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-	if hasName > 0 {
-		if _, err := db.ExecContext(ctx, `ALTER TABLE profiles DROP COLUMN display_name`); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}

@@ -1,0 +1,4 @@
+# Audit's routes are its resources, at every kind and under /user, at their
+# defaults. Override them here (plat5 docs/reference/config/resources.md).
+audit:
+  url: http://audit:3002

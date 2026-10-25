@@ -3,7 +3,7 @@
 // The gateway records every audited request before it reaches this service. A write adds
 // what it changed on X-Plat5-Audit-Details, and a create names the id it made on
 // X-Plat5-Audit-Created. The gateway stores both with the event and strips them before
-// the response reaches the client. Contract: plat5 docs/audit.md#what-a-service-adds.
+// the response reaches the client. Contract: plat5 docs/concepts/audit.md#what-a-service-adds.
 //
 // Changes are {"from", "to"} for the fields that changed. A create names what it made.
 // A delete sends nothing: the route and its path say what happened. Never a secret.

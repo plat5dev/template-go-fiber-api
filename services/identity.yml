@@ -1,0 +1,4 @@
+# Identity's routes are its resources, at every kind and under /user, at their
+# defaults. Override them here (plat5 docs/reference/config/resources.md).
+identity:
+  url: http://identity:3000

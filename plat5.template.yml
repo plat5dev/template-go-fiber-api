@@ -1,24 +1,20 @@
 name: go-fiber-api
 kind: api
-description: Go + Fiber reference API (profiles, projects, tasks)
+description: Go + Fiber reference API (tasks inside a project, and the person's profile)
 
-upstreams:
-  api: "3000"
+# The API's service file. plat5 init adds it to the project's services/ and
+# lists it in plat5.yml.
+service: services/api.yml
 
-routes:
-  - ./routes.identity.yml
-  - ./routes.audit.yml
-  - ./routes.yml
-
-# What staff may call on this API. plat5 init adds it to operator.routes.yml.
+# What the operator plane may call on this API. plat5 init adds it to
+# operator.routes.yml.
 operator_routes: ./routes.operator.yml
 
 substitute:
   - go.mod
 
-# plat5 init copies this starter into a project's api/ folder, and moves the
-# route files and roles.yml up to the project root: they are the project's.
-# plat5 start runs the API from this compose file.
+# plat5 init copies this starter into a project's api/ folder. plat5 start
+# runs the API from this compose file.
 app:
   compose: docker-compose.yml
 

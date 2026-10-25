@@ -1,0 +1,44 @@
+# The deployment's config (plat5 docs/concepts/config.md): settings, the tree's
+# kinds, the roles, and the service files, one per service.
+# plat5 start applies it to the local stack; plat5 apply applies it anywhere.
+#
+# Kinds and roles are yours: Plat5 names neither. Identity's and audit's routes
+# come from their resources: at every kind, and the person's own under /user.
+# This starter's API is services/api.yml. To add a service, write
+# services/<name>.yml and list it under services.
+deletion_grace: 30d
+reserved_slugs: [new, settings, api, admin]
+users:
+  name_claim: name
+kinds:
+  organization:
+    path: /orgs/{organization}
+    list_permission: organization:read
+  project:
+    parent: organization
+    path: /projects/{project}
+    list_permission: project:read
+# The example roles (plat5 docs/reference/config/roles.md). Whoever holds
+# bindings:write can grant any role, so admin, with "*", is the only role that
+# holds it. Every permission a role grants must be one some route requires, or
+# a kind's list_permission: apply refuses the rest.
+roles:
+  admin:
+    permissions: ["*"]
+    bindable_at: [organization, project]
+  member:
+    permissions: [organization:read]
+    bindable_at: [organization]
+  developer:
+    includes: [member]
+    permissions: [project:create, project:read, project:write, project:bindings:read]
+    bindable_at: [organization, project]
+creator_role: admin
+# Rate limits (plat5 docs/reference/config/rate-limits.md). default is every
+# route's that names no policy; a route says rate_limit: false to have none.
+rate_limits:
+  default: { requests: 100, window_seconds: 1 }
+services:
+  - services/identity.yml
+  - services/audit.yml
+  - services/api.yml

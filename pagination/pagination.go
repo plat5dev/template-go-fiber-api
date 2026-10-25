@@ -2,7 +2,7 @@
 //
 // limit defaults to 50; over 100 is clamped. starting_after is the id of the last item on
 // the previous page. Lists run in id order (ids are ULIDs, so oldest first) and answer
-// with the collection and has_more. Contract: plat5 docs/lists.md.
+// with the collection and has_more. Contract: plat5 docs/reference/lists.md.
 package pagination
 
 import (
@@ -27,7 +27,7 @@ type Page struct {
 }
 
 // Parse reads limit and starting_after. A limit under 1 or not a number, or a cursor
-// that isn't a ULID, is a 422. A well-formed cursor that isn't in the list is not an
+// that isn't a lowercase ULID, is a 422. A well-formed cursor that isn't in the list is not an
 // error: the walk continues after it in id order.
 func Parse(c fiber.Ctx) (Page, error) {
 	page := Page{Limit: DefaultLimit}
@@ -39,7 +39,7 @@ func Parse(c fiber.Ctx) (Page, error) {
 		page.Limit = min(n, MaxLimit)
 	}
 	if v := strings.TrimSpace(c.Query("starting_after")); v != "" {
-		if _, err := ulid.Parse(v); err != nil {
+		if _, err := ulid.ParseStrict(v); err != nil || v != strings.ToLower(v) {
 			return Page{}, errors.FieldError("starting_after", "")
 		}
 		page.StartingAfter = strings.Clone(v)

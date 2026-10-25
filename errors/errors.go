@@ -45,7 +45,19 @@ func (e *ApiError) Error() string {
 // FallbackValidation is the 422 sentence when nothing more specific applies.
 const FallbackValidation = "That doesn't look right."
 
-// Common error constructors
+// Common error constructors. Each fallback sentence is plat5 docs/reference/error-copy.md's.
+
+// InvalidRequestError is a 400: the request lacks something the API requires of the front
+// door, such as X-Plat5-Member-Id on a create.
+func InvalidRequestError() *ApiError {
+	return &ApiError{
+		Type:    "invalid_request_error",
+		Code:    "INVALID_REQUEST",
+		Message: "Malformed request.",
+		Details: nil,
+		Status:  fiber.StatusBadRequest,
+	}
+}
 
 func ValidationError(message string, details interface{}) *ApiError {
 	return &ApiError{
@@ -71,7 +83,7 @@ func NotFoundError(resource string, id interface{}) *ApiError {
 	return &ApiError{
 		Type:    "invalid_request_error",
 		Code:    "NOT_FOUND",
-		Message: "Resource not found",
+		Message: "Resource not found.",
 		Details: map[string]interface{}{
 			"resource": resource,
 			"id":       id,
@@ -84,7 +96,7 @@ func ConflictError(field string, value interface{}) *ApiError {
 	return &ApiError{
 		Type:    "invalid_request_error",
 		Code:    "CONFLICT",
-		Message: "Resource already exists",
+		Message: "That already exists.",
 		Details: map[string]interface{}{
 			"field": field,
 			"value": value,
@@ -97,7 +109,7 @@ func PayloadTooLargeError(maxSizeBytes int64) *ApiError {
 	return &ApiError{
 		Type:    "invalid_request_error",
 		Code:    "PAYLOAD_TOO_LARGE",
-		Message: "Request body exceeds maximum allowed size",
+		Message: "Request body is too large.",
 		Details: map[string]interface{}{
 			"max_size_bytes": maxSizeBytes,
 		},
@@ -109,7 +121,7 @@ func InternalError() *ApiError {
 	return &ApiError{
 		Type:    "api_error",
 		Code:    "INTERNAL_ERROR",
-		Message: "An unexpected error occurred",
+		Message: "An unexpected error occurred.",
 		Details: nil,
 		Status:  fiber.StatusInternalServerError,
 		Kind:    KindInternal,
@@ -120,7 +132,7 @@ func ServiceUnavailableError() *ApiError {
 	return &ApiError{
 		Type:    "api_error",
 		Code:    "SERVICE_UNAVAILABLE",
-		Message: "Service temporarily unavailable",
+		Message: "Service temporarily unavailable.",
 		Details: nil,
 		Status:  fiber.StatusServiceUnavailable,
 		Kind:    KindNetwork,
@@ -168,7 +180,7 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 		apiErr = e
 	case *fiber.BindError:
 		// v3 structured binding errors. The binder's own text is not product copy
-		// (docs/error-copy.md): name the field, with the fallback sentence.
+		// (plat5 docs/reference/error-copy.md): name the field, with the fallback sentence.
 		apiErr = FieldError(e.Field, "")
 	case *fiber.Error:
 		// Fiber's built-in errors (e.g., from c.Status().SendString())

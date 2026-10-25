@@ -29,11 +29,12 @@ func TestParse(t *testing.T) {
 		{"", 200, DefaultLimit, ""},
 		{"?limit=10", 200, 10, ""},
 		{"?limit=500", 200, MaxLimit, ""},
-		{"?starting_after=01JD8Y2N5R7T9V1X3Z5B7D9F1H", 200, DefaultLimit, "01JD8Y2N5R7T9V1X3Z5B7D9F1H"},
+		{"?starting_after=01jd8y2n5r7t9v1x3z5b7d9f1h", 200, DefaultLimit, "01jd8y2n5r7t9v1x3z5b7d9f1h"},
 		{"?limit=0", 422, 0, ""},
 		{"?limit=-1", 422, 0, ""},
 		{"?limit=ten", 422, 0, ""},
 		{"?starting_after=nope", 422, 0, ""},
+		{"?starting_after=01JD8Y2N5R7T9V1X3Z5B7D9F1H", 422, 0, ""},
 	}
 	for _, tc := range cases {
 		res, err := app.Test(httptest.NewRequest("GET", "/"+tc.query, nil))

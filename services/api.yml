@@ -1,0 +1,24 @@
+# The API's routes (plat5 docs/reference/config/services.md): tasks inside a
+# project, and the person's own profile. The gateway forwards a project's
+# routes with its id in the path and the caller's member id in
+# X-Plat5-Member-Id, and the profile with the caller's user id in the path.
+api:
+  url: http://api:3000
+  scopes:
+    project:
+      upstream_prefix: /projects/{project.id}
+      routes:
+        - path: /tasks
+          methods:
+            GET: { required_permissions: [project:read] }
+            POST: { required_permissions: [project:write] }
+        - path: /tasks/{task_id}
+          methods:
+            GET: { required_permissions: [project:read] }
+            PATCH: { required_permissions: [project:write] }
+            DELETE: { required_permissions: [project:write] }
+    user:
+      routes:
+        - path: /user/profile
+          upstream: /users/{user.id}/profile
+          methods: [GET, PUT]

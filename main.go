@@ -13,10 +13,10 @@ import (
 
 	"github.com/example/go-fiber-api/db"
 	"github.com/example/go-fiber-api/errors"
+	"github.com/example/go-fiber-api/lifecycle"
 	"github.com/example/go-fiber-api/metrics"
 	"github.com/example/go-fiber-api/middleware"
 	"github.com/example/go-fiber-api/profiles"
-	"github.com/example/go-fiber-api/projects"
 	"github.com/example/go-fiber-api/tasks"
 	"github.com/example/go-fiber-api/telemetry"
 )
@@ -46,12 +46,10 @@ func main() {
 	}
 
 	profileStore := profiles.NewStore(sqlDB)
-	projectStore := projects.NewStore(sqlDB)
 	taskStore := tasks.NewStore(sqlDB)
 
 	profileHandler := profiles.NewHandler(profileStore, telem)
-	projectHandler := projects.NewHandler(projectStore, telem)
-	taskHandler := tasks.NewHandler(taskStore, projectStore, telem)
+	taskHandler := tasks.NewHandler(taskStore, telem)
 
 	app := fiber.New(fiber.Config{
 		AppName:      "api",
@@ -70,14 +68,8 @@ func main() {
 	app.Get("/users/:user_id/profile", profileHandler.Get)
 	app.Put("/users/:user_id/profile", profileHandler.Upsert)
 
-	projectRoutes := app.Group("/organizations/:organization_id/projects")
-	projectRoutes.Get("/", projectHandler.List)
-	projectRoutes.Post("/", projectHandler.Create)
-	projectRoutes.Get("/:project_id", projectHandler.Get)
-	projectRoutes.Patch("/:project_id", projectHandler.Update)
-	projectRoutes.Delete("/:project_id", projectHandler.Delete)
-
-	taskRoutes := app.Group("/organizations/:organization_id/projects/:project_id/tasks")
+	// A project is a Plat5 node: its id is in the path, from the front door.
+	taskRoutes := app.Group("/projects/:project_id/tasks")
 	taskRoutes.Get("/", taskHandler.List)
 	taskRoutes.Post("/", taskHandler.Create)
 	taskRoutes.Get("/:task_id", taskHandler.Get)
@@ -116,6 +108,12 @@ func main() {
 		Str("port", port).
 		Str("internal_port", internalPort).
 		Msg("starting api server")
+
+	if identityURL := os.Getenv("IDENTITY_INTERNAL_URL"); identityURL != "" {
+		go lifecycle.New(identityURL, sqlDB, taskStore, baseLogger).Run(ctx)
+	} else {
+		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading the lifecycle feed, so a purged project's tasks are kept")
+	}
 
 	go func() {
 		if err := internalApp.Listen(":" + internalPort); err != nil {

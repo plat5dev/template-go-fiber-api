@@ -43,7 +43,7 @@ func TestSet(t *testing.T) {
 		d := Details{}
 		d.Changed("name", "a", "b")
 		Set(c, d)
-		SetCreated(c, "01JD8Y2N5R7T9V1X3Z5B7D9F1H")
+		SetCreated(c, "01jd8y2n5r7t9v1x3z5b7d9f1h")
 		return c.SendStatus(fiber.StatusOK)
 	})
 	app.Post("/unchanged", func(c fiber.Ctx) error {
@@ -64,7 +64,7 @@ func TestSet(t *testing.T) {
 	if got := res.Header.Get(DetailsHeader); got != `{"name":{"from":"a","to":"b"}}` {
 		t.Fatalf("details = %q", got)
 	}
-	if got := res.Header.Get(CreatedHeader); got != "01JD8Y2N5R7T9V1X3Z5B7D9F1H" {
+	if got := res.Header.Get(CreatedHeader); got != "01jd8y2n5r7t9v1x3z5b7d9f1h" {
 		t.Fatalf("created = %q", got)
 	}
 

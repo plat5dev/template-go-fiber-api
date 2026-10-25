@@ -1,112 +1,149 @@
-# Go + Fiber API template
+# Go + Fiber API starter
 
-Reference Plat5 business service: **Go** + **Fiber v3**, SQLite (`modernc.org/sqlite`), Prometheus + OTel.
+A Plat5 API starter: **Go** + **Fiber v3**, SQLite (`modernc.org/sqlite`), Prometheus + OTel. It serves tasks inside a project, and the person's own profile. The repo is a Plat5 project you can run as is: `plat5 start` in this directory runs Plat5, applies `plat5.yml`, and runs the API beside it.
 
-Gateway admits the caller and fills `{subject.*}` into `upstream`. This service trusts that path and owns business logic only. It does not parse `Authorization` or `X-API-Key`, and it does not read identity from headers.
+Plat5 decides who may call what, at its gateway. This service owns business logic only: it reads the node ids and the caller's member id the front door gives it, and checks nothing about the caller ([plat5 `docs/guides/write-a-service.md`](https://github.com/plat5dev/plat5/blob/master/docs/guides/write-a-service.md)).
 
-That trust is the security model: **nothing but the gateway may reach this service.** Anyone who can call it directly can name any org in the path. Locally, `plat5 start` puts the container on the Plat5 network, the gateway calls it as `http://api:3000`, and the host port is bound to `127.0.0.1` for your own curls. In production, don't publish the port at all.
+## What it serves
 
-## Stack
+Projects are Plat5 nodes, a kind in `plat5.yml`: created, listed, renamed, deleted and restored through identity's routes (`/orgs/{organization}/projects`…), with their name as the node's `display_name`. The API keeps no projects of its own. It serves what's inside one:
 
-| Piece | Choice |
-|-------|--------|
-| Runtime | Go 1.25+ |
-| HTTP | Fiber v3 |
-| DB | SQLite (pure Go, no CGO) |
-| IDs | ULID |
-| Logs | zerolog JSON stdout |
-| Metrics | Prometheus scrape + optional OTLP bridge |
-| Traces | OTLP HTTP (opt-in via endpoint) |
+| Public (gateway) | The API's own path | Permission |
+|--|--|--|
+| `GET /orgs/{organization}/projects/{project}/tasks` | `GET /projects/{project_id}/tasks` | `project:read` |
+| `POST /orgs/{organization}/projects/{project}/tasks` | `POST /projects/{project_id}/tasks` | `project:write` |
+| `GET /orgs/{organization}/projects/{project}/tasks/{task_id}` | `GET /projects/{project_id}/tasks/{task_id}` | `project:read` |
+| `PATCH`, `DELETE /orgs/{organization}/projects/{project}/tasks/{task_id}` | the same, on `/projects/{project_id}/tasks/{task_id}` | `project:write` |
+| `GET`, `PUT /user/profile` | `/users/{user_id}/profile` | user route |
 
-## Demo domain
+`{organization}` and `{project}` take a slug or an id; the gateway resolves them and sends the project's id. Both answer only for what the caller may reach: a project they can't use, or one that doesn't exist, is the gateway's **403**.
 
-This process listens on the rewritten path.
+| Data | Keyed by | Fields |
+|------|----------|--------|
+| Task | The project's node id | `id`, `project_id`, `title`, `status` (`todo`, `in_progress`, `done`), `created_by`, `created_at`, `updated_at` |
+| Profile | The user id | `user_id`, `bio`, `created_at`, `updated_at` |
 
-| Resource | Scope | Credential | Edge | Listen path |
-|----------|-------|------------|------|-------------|
-| Profiles | `user` | user JWT or user API key | `/user/profile` | `/users/{user_id}/profile` |
-| Projects | `organization` | member key or member session | `/org/projects` | `/organizations/{organization_id}/projects` |
-| Tasks | `organization` | member key or member session | `/org/projects/{project_id}/tasks` | `.../projects/{project_id}/tasks` |
+A task is authored: `created_by` is the member id of whoever created it, and stays theirs if they leave the tree ([where a field goes](https://github.com/plat5dev/plat5/blob/master/docs/concepts/model.md#where-a-field-goes)). A profile is the person's, the same in every tree, so it sits on a user route. The person's name is identity's (`GET /user`), not the profile's.
 
-`GET` and `PUT` on the profile. Projects and tasks: `GET` and `POST` on the collection; `GET`, `PATCH`, and `DELETE` on `{project_id}` / `{task_id}`.
+Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 
-Profiles are the person's: this app's data about them, keyed by the directory id. The person's name is identity's (`GET /user`), not this app's. Projects and tasks are the org's: they store the owner, not who made them (the org's audit log records who did what). Organization scope is a member key or member session, not a user JWT. Handlers read `user_id` and `organization_id` from those path params.
+## The config
 
-## Build your first feature
+| File | What |
+|------|------|
+| `plat5.yml` | The deployment's config: settings, the `organization` and `project` kinds, the example roles (`admin`, `member`, `developer`), `creator_role`, the `default` rate limit, and the service files ([plat5 `docs/concepts/config.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/config.md#the-config)) |
+| `services/api.yml` | This API's service file: its url (`http://api:3000`) and its routes, in the `project` and `user` scopes ([services](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/services.md)) |
+| `services/identity.yml`, `services/audit.yml` | Identity's and audit's service files: their urls, at their default resources ([resources](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/resources.md)) |
+| `plat5.dev.yml` | How `plat5 start` runs the project on your machine: image versions, modules, and `app.compose` |
+| `docker-compose.yml` | The API's container, `api`, on port 3000 |
+| `routes.operator.yml` | What the operator plane may call on this API: the read routes, by project id (operator `docs/reference/routes.md`) |
+| `plat5.template.yml` | The starter's manifest for `plat5 init`: its service file, operator routes, compose file and next steps |
 
-A `GET /org/stats` for the caller's org, end to end. About ten minutes, no restart.
+## What it trusts
 
-**1. Add the handler.** A package `stats/` with a handler on `/organizations/:organization_id/stats`, registered in `main.go` beside the projects group (copy `projects/`). Read `c.Params("organization_id")`. Don't check who called: the gateway did, and the path is the answer.
+Only front doors may reach the API: Plat5's gateway, an operator plane, anything else on the private network. Anyone who can call it directly can name any project in the path. Locally, `plat5 start` puts the container on the Plat5 network, where the gateway calls it as `http://api:3000`, and the host port is bound to `127.0.0.1` for your own curls. In production, don't publish the port at all.
 
-**2. Route it.** Add the edge path to the project's `routes.yml` (at the project root, beside `plat5.yml`), under the `api` service's `organization` routes. `{subject.organization_id}` is filled from the caller's credential, never from the client:
+| It reads | From | On |
+|----------|------|----|
+| The project's id | The path, `/projects/{project_id}/…`, written by `upstream_prefix: /projects/{project.id}` | Task routes |
+| The caller's member id | `X-Plat5-Member-Id` | Task creates (required: **400** `INVALID_REQUEST` without it); request logs |
+| The caller's user id | The path, `/users/{user_id}/profile`, written by `upstream: /users/{user.id}/profile` | Profile routes |
+| `X-Request-ID` | The front door | Every request: logged, and in error bodies. Never set on a response |
+| `traceparent` | The front door | Every request: the server span's parent |
 
-```yaml
-        - path: /org/stats
-          upstream: /organizations/{subject.organization_id}/stats
-          methods: [GET]
-          required_labels: [stats:read]   # step 3; leave it out for any member
-```
+The gateway also sends the same ids as `X-Plat5-Project-Id`, `X-Plat5-Organization-Id` and `X-Plat5-User-Id`; the API reads the path instead. It never sees `Authorization`, a slug, a principal id, or the caller's permissions or role ([plat5 `docs/reference/headers.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/headers.md)).
 
-**3. Require a permission.** `required_labels` names the label; grant it to roles in the project's `roles.yml` (`admin: [..., stats:read]`). A role with `"*"` holds every label. `plat5 start`, `plat5 routes apply`, and `plat5 roles apply` warn when a label in a route and one in a role are a letter or two apart, so a typo (`stats:raed`) shows up on either side.
+Every lookup is scoped by the project id in the path, and nothing checks that the project exists or that the caller may act: the front door decided. A task id under another project is **404**.
 
-**4. Apply.** `plat5 routes apply && plat5 roles apply`, or `plat5 start`. Neither restarts anything.
+## Following the lifecycle
 
-**5. Call it.** With the member key from `plat5 status`: `curl localhost:5400/org/stats -H "X-API-Key: …"`. With a key whose role lacks the label: **403** `FORBIDDEN`, naming `required_labels`. With a user key: **401**, saying the route takes a member credential.
+The API reads identity's lifecycle feed, `GET {IDENTITY_INTERNAL_URL}/internal/lifecycle-events?starting_after=<id>&limit=100` ([plat5 `docs/concepts/lifecycle.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#lifecycle-events)), in `lifecycle/`.
 
-**6. Writes: say what changed.** For a `POST`, `PATCH`, or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)). The event shows up in the operator console's org audit log, and on the customer console's Audit log page.
+| Event | The API |
+|-------|---------|
+| `node.purged` with `kind: project` | Deletes that project's tasks |
+| Everything else | Nothing. Tasks are authored, so `member.removed` keeps them, and there's no background work to stop on `node.deleted` |
 
-**7. Optional: let staff see it.** In the project's `operator.routes.yml`, add the listen path (`/organizations/{organization_id}/stats`) under the `api` upstream, beside the project routes `plat5 init` put there from `routes.operator.yml`. `plat5 start` restarts the operator gateway with it, and the operator console can call it.
+It polls every 5 seconds, and reads again at once while `has_more` is `true`. The cursor, the last event `id` acted on, is kept in SQLite (`lifecycle_cursor`) and advanced after acting; deleting a purged project's tasks again changes nothing, so an event read twice is harmless. A failed poll is logged and tried on the next tick. With `IDENTITY_INTERNAL_URL` unset the feed isn't read, and the API says so once at boot.
 
 ## Lists
 
-Project and task lists page like every Plat5 list (plat5 [`docs/lists.md`](https://github.com/plat5dev/plat5/blob/master/docs/lists.md)). `pagination/` reads the params.
+The task list pages like every Plat5 list ([plat5 `docs/reference/lists.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/lists.md)). `pagination/` reads the params.
 
 | | |
 |---|---|
 | `limit` | Default 50, max 100. Over the max is clamped. Under 1 or not a number → **422** |
-| `starting_after` | The `id` of the last item on the previous page. Not a ULID → **422** |
-| Answer | `{"projects": [...], "has_more": false}`, in `id` order (oldest first) |
+| `starting_after` | The `id` of the last item on the previous page. Not a lowercase ULID → **422** |
+| Answer | `{"tasks": [...], "has_more": false}`, in `id` order (oldest first) |
 
 ## Audit details
 
-The gateway records each write before it reaches this service. Each write says what it changed on `X-Plat5-Audit-Details`, and a create names its new id on `X-Plat5-Audit-Created` (plat5 [`docs/audit.md`](https://github.com/plat5dev/plat5/blob/master/docs/audit.md#what-a-service-adds)). The gateway stores them with the event and strips them before the client sees the response. `audit/` builds and encodes them.
+The gateway records each write before it reaches this service. Each write says what it changed on `X-Plat5-Audit-Details`, and a create names its new id on `X-Plat5-Audit-Created` ([plat5 `docs/concepts/audit.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/audit.md#what-a-service-adds)). The gateway stores them with the event and strips them before the client sees the response. `audit/` builds and encodes them.
 
 | Write | Details |
 |-------|---------|
-| `POST` projects | `project_id`, `name`. Created: the project id |
-| `PATCH` a project | `name`, `description` as changes |
 | `POST` tasks | `task_id`, `title`, `status`. Created: the task id |
 | `PATCH` a task | `title`, `status` as changes |
 | `PUT` the profile | `bio` as a change |
-| `DELETE` | None: the route and its path say what happened |
+| `DELETE` a task | None: the route and its path say what happened |
 
 A change is `{"from": …, "to": …}`, only for fields that changed; a write that changed nothing sends no header. Never put a secret in either header.
 
-## Quick start
+## Run it
+
+You need Docker and the `plat5` CLI.
 
 ```bash
-plat5 init my-app --template go-fiber-api
-cd my-app
 plat5 start
 ```
 
-You need Docker, nothing else. `plat5 init` puts this starter in the project's `api/` folder, beside a customer console (`customer-console/`) and an operator console (`operator-console/`), and moves the route files and `roles.yml` up to the project root: they are the whole project's. `routes.operator.yml` goes into the project's `operator.routes.yml`. `plat5 start` runs Plat5, its modules, and all three apps, then prints every link, login, and a key to call the API with. Sign in to the customer console as `dev@example.com` / `password`. The project's `README.md` says how to extend each part.
+`plat5 start` runs Plat5 and its modules, applies `plat5.yml`, builds and runs the API from `docker-compose.yml`, and seeds a dev person with an org, `Dev` (`/orgs/dev`), and a personal key. It prints the links, logins and key; `plat5 status` prints them again. Every credential is sent as `Authorization: Bearer`:
 
-`plat5.template.yml` drives init: upstreams, routes, and this compose file.
+```bash
+KEY=plat5-k-2-…   # from plat5 status
+curl -X POST localhost:5400/orgs/dev/projects -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"display_name": "Demo"}'
+curl -X POST localhost:5400/orgs/dev/projects/demo/tasks -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"title": "Ship it"}'
+curl localhost:5400/orgs/dev/projects/demo/tasks -H "Authorization: Bearer $KEY"
+curl -X PUT localhost:5400/user/profile -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"bio": "Hello"}'
+```
 
-To run the API on your own machine instead (your debugger, your editor's runner), from `api/`:
+To run the API on your own machine instead (your debugger, your editor's runner):
 
 ```bash
 plat5 start -x app
 go run .
 ```
 
-`-x app` runs none of the project's apps; run the two consoles from their folders the same way, or leave them off.
+`-x app` runs everything but the API, and points the gateway's `api` at your machine, so the API must listen on port 3000. Identity's internal port isn't published there, so the lifecycle feed isn't read in this mode.
 
-Community / fork:
-```bash
-plat5 init my-app --template plat5dev/template-go-fiber-api
+`plat5 stop` stops it all; data is kept.
+
+## Build your first feature
+
+A `GET /orgs/{organization}/projects/{project}/stats` for a project, end to end.
+
+**1. Add the handler.** A package `stats/` with a handler on `/projects/:project_id/stats`, registered in `main.go` beside the task routes (copy `tasks/`). Read `c.Params("project_id")`. Don't check who called: the front door did, and the path is the answer.
+
+**2. Route it.** Add it to `services/api.yml`, in the `project` scope. The path is relative to the project; `upstream_prefix` makes its upstream `/projects/{project.id}/stats`:
+
+```yaml
+        - path: /stats
+          methods:
+            GET: { required_permissions: [stats:read] }
 ```
+
+**3. Grant the permission.** Add `stats:read` to a role's `permissions` in `plat5.yml` (`developer`, say). `admin`'s `"*"` already holds it. A permission a role grants that no route requires is refused at apply, so a typo on either side shows up there.
+
+**4. Apply.** `plat5 apply`, or `plat5 start` again. Nothing restarts.
+
+**5. Call it.** `curl localhost:5400/orgs/dev/projects/demo/stats -H "Authorization: Bearer $KEY"`. With a credential whose roles there lack `stats:read`: **403** `FORBIDDEN`, with `required_permissions` in `details`.
+
+**6. Writes: say what changed.** For a `POST`, `PUT`, `PATCH` or `DELETE`, set the audit details where the old and new values are in hand ([Audit details](#audit-details)), and read the author from `X-Plat5-Member-Id` if the record has one.
+
+**7. Let the operator plane see it.** Add the API's own path, `/projects/{project_id}/stats` with `node: project_id`, to the operator plane's route file beside the routes from `routes.operator.yml`.
 
 ## Commands
 
@@ -133,6 +170,7 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `PORT` | `3000` | Public |
 | `INTERNAL_PORT` | `3001` | Health + `/metrics` |
 | `DATABASE_PATH` | `./data/app.db` | SQLite file |
+| `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for the lifecycle feed. The compose file sets `http://identity:3001`. Unset → the feed isn't read |
 | `OTEL_SERVICE_NAME` | `api` | Resource `service.name` |
 | `OTEL_SERVICE_NAMESPACE` | `api` | Resource `service.namespace` |
 | `OTEL_SERVICE_VERSION` | `CI_COMMIT_TAG`, else `0.0.0` | Resource `service.version` |
@@ -150,13 +188,13 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 
 ## Telemetry
 
-Contract: Plat5 [`docs/telemetry.md`](https://github.com/plat5dev/plat5/blob/master/docs/telemetry.md).
+Contract: Plat5 [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md).
 
 | Signal | Path |
 |--------|------|
-| Logs | JSON stdout (zerolog); access line per request |
+| Logs | JSON stdout (zerolog); access line per request, with `request_id`, and `node_id` and `member_id` on task routes or `user_id` on the profile |
 | Metrics scrape | Prometheus `/metrics` on `INTERNAL_PORT` |
-| Traces | OTLP HTTP when endpoint set (default) |
+| Traces | OTLP HTTP when endpoint set (default); the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
 | Metrics OTLP | On when endpoint set (default); set `OTEL_METRICS_EXPORTER=prometheus` to opt out |
 
 ```bash
@@ -172,17 +210,20 @@ Health and `/metrics` are on the internal app (not OTel-instrumented).
 ## Layout
 
 ```
-main.go              # dual listen: public + internal
-db/                  # SQLite open + migrate
+main.go              # dual listen: public + internal; starts the lifecycle reader
+db/                  # SQLite open + schema
 errors/              # Plat5 error envelope
 audit/               # X-Plat5-Audit-Details / -Created
 pagination/          # limit, starting_after, has_more
+lifecycle/           # identity's lifecycle feed: purged projects
 metrics/             # Prometheus SoT
 middleware/          # request logger
 telemetry/           # OTel init (exporter matrix)
-profiles|projects|tasks/
-../routes.yml, ../roles.yml  # at the project root: the gateway routes and the roles
-plat5.template.yml   # CLI init metadata
+profiles/ tasks/     # the API
+plat5.yml services/  # the deployment's config
+plat5.dev.yml        # plat5 start
+routes.operator.yml  # the operator plane's routes on this API
+plat5.template.yml   # the starter's manifest
 ```
 
 ## Docker
@@ -193,4 +234,4 @@ docker compose up --build
 
 ## Gold standard
 
-Clone this template (or copy packages) when starting a new Go Plat5 service. Keep telemetry gating in-tree — do not publish a shared telemetry library across products.
+Clone this starter (or copy packages) when starting a new Go Plat5 service. Keep telemetry gating in-tree — do not publish a shared telemetry library across products.
