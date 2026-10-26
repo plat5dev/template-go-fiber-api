@@ -18,6 +18,10 @@ kinds:
     parent: organization
     path: /projects/{project}
     list_permission: project:read
+  environment:
+    parent: project
+    path: /envs/{environment}
+    list_permission: environment:read
 # The example roles (plat5 docs/reference/config/roles.md). Whoever holds
 # bindings:write can grant any role, so admin, with "*", is the only role that
 # holds it. Every permission a role grants must be one some route requires, or
@@ -25,14 +29,15 @@ kinds:
 roles:
   admin:
     permissions: ["*"]
-    bindable_at: [organization, project]
+    bindable_at: [organization, project, environment]
   member:
     permissions: [organization:read]
     bindable_at: [organization]
   developer:
     includes: [member]
-    permissions: [project:create, project:read, project:write, project:bindings:read]
-    bindable_at: [organization, project]
+    permissions: [project:create, project:read, project:write, project:bindings:read,
+      environment:create, environment:read, environment:write, environment:bindings:read]
+    bindable_at: [organization, project, environment]
 creator_role: admin
 # Rate limits (plat5 docs/reference/config/rate-limits.md). default is every
 # route's that names no policy; a route says rate_limit: false to have none.

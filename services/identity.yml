@@ -1,4 +1,12 @@
-# Identity's routes are its resources, at every kind and under /user, at their
-# defaults. Override them here (plat5 docs/reference/config/resources.md).
+# Identity's routes are its resources, at every kind and under /user. This file
+# holds only what differs from their defaults (plat5
+# docs/reference/config/resources.md).
 identity:
   url: http://identity:3000
+  # Service accounts belong to an organization, for automation across it, or to
+  # an environment, for that environment's keys. Not to a project: a key across
+  # a project is an organization's service account bound at the project. Remove
+  # this kinds block to have them at projects too.
+  kinds:
+    project:
+      resources: { service_accounts: false, service_account: false, keys: false, key: false }

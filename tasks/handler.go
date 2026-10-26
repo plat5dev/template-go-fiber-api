@@ -13,8 +13,8 @@ import (
 	"github.com/example/go-fiber-api/telemetry"
 )
 
-// MemberHeader is the caller's member id in the project's tree, from the front door. A
-// create records it as the task's author, and answers 400 without it.
+// MemberHeader is the caller's member id in the environment's tree, from the front
+// door. A create records it as the task's author, and answers 400 without it.
 const MemberHeader = "X-Plat5-Member-Id"
 
 type Handler struct {
@@ -38,16 +38,17 @@ type updateBody struct {
 
 var validStatus = map[string]bool{"todo": true, "in_progress": true, "done": true}
 
-// Every handler scopes its lookups by the project id in the path, and checks nothing about
-// the caller or the project: the front door decided who may call, on which project.
+// Every handler scopes its lookups by the environment id in the path, and checks nothing
+// about the caller or the environment: the front door decided who may call, on which
+// environment.
 
 func (h *Handler) List(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	environmentID := c.Params("environment_id")
 	page, err := pagination.Parse(c)
 	if err != nil {
 		return err
 	}
-	list, more, err := h.store.ListByProject(c.Context(), projectID, page)
+	list, more, err := h.store.ListByEnvironment(c.Context(), environmentID, page)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -55,7 +56,7 @@ func (h *Handler) List(c fiber.Ctx) error {
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	environmentID := c.Params("environment_id")
 	memberID := c.Get(MemberHeader)
 	if memberID == "" {
 		return errors.InvalidRequestError()
@@ -80,13 +81,13 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	t := &Task{
-		ID:        strings.ToLower(ulid.Make().String()),
-		ProjectID: projectID,
-		Title:     title,
-		Status:    status,
-		CreatedBy: memberID,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:            strings.ToLower(ulid.Make().String()),
+		EnvironmentID: environmentID,
+		Title:         title,
+		Status:        status,
+		CreatedBy:     memberID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	if err := h.store.Insert(c.Context(), t); err != nil {
 		return errors.InternalError()
@@ -97,9 +98,9 @@ func (h *Handler) Create(c fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	environmentID := c.Params("environment_id")
 	taskID := c.Params("task_id")
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
+	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -110,13 +111,13 @@ func (h *Handler) Get(c fiber.Ctx) error {
 }
 
 func (h *Handler) Update(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	environmentID := c.Params("environment_id")
 	taskID := c.Params("task_id")
 	var body updateBody
 	if err := c.Bind().Body(&body); err != nil {
 		return errors.FieldError("body", "")
 	}
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
+	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -152,16 +153,16 @@ func (h *Handler) Update(c fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	environmentID := c.Params("environment_id")
 	taskID := c.Params("task_id")
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
+	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
 	if t == nil {
 		return errors.NotFoundError("task", taskID)
 	}
-	if err := h.store.Delete(c.Context(), projectID, taskID); err != nil {
+	if err := h.store.Delete(c.Context(), environmentID, taskID); err != nil {
 		return errors.InternalError()
 	}
 	// No audit details: the route and the task id in its path say what happened.

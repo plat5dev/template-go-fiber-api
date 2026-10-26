@@ -9,11 +9,11 @@ services:
   api:
     url: http://api:3000
     routes:
-      - path: /projects/{project_id}/tasks
-        node: project_id
+      - path: /environments/{environment_id}/tasks
+        node: environment_id
         as_member: true
         methods: [GET]
-      - path: /projects/{project_id}/tasks/{task_id}
-        node: project_id
+      - path: /environments/{environment_id}/tasks/{task_id}
+        node: environment_id
         as_member: true
         methods: [GET]

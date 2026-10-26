@@ -1,6 +1,6 @@
 name: go-fiber-api
 kind: api
-description: Go + Fiber reference API (tasks inside a project, and the person's profile)
+description: Go + Fiber reference API (tasks inside an environment, and the person's profile)
 
 # The API's service file. plat5 init adds it to the project's services/ and
 # lists it in plat5.yml.

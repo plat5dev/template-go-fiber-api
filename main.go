@@ -69,8 +69,8 @@ func main() {
 	app.Get("/users/:user_id/profile", profileHandler.Get)
 	app.Put("/users/:user_id/profile", profileHandler.Upsert)
 
-	// A project is a Plat5 node: its id is in the path, from the front door.
-	taskRoutes := app.Group("/projects/:project_id/tasks")
+	// An environment is a Plat5 node: its id is in the path, from the front door.
+	taskRoutes := app.Group("/environments/:environment_id/tasks")
 	taskRoutes.Get("/", taskHandler.List)
 	taskRoutes.Post("/", taskHandler.Create)
 	taskRoutes.Get("/:task_id", taskHandler.Get)
@@ -113,7 +113,7 @@ func main() {
 	if identityURL := os.Getenv("IDENTITY_INTERNAL_URL"); identityURL != "" {
 		go lifecycle.New(identityURL, sqlDB, taskStore, baseLogger).Run(ctx)
 	} else {
-		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading the lifecycle feed, so a purged project's tasks are kept")
+		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading the lifecycle feed, so a purged environment's tasks are kept")
 	}
 
 	go func() {

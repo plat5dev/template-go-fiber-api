@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	project = "01jd8x3k7q0000000000000000"
-	other   = "01jd8x3k7q0000000000000001"
-	member  = "01jd8x3k7q00000000000000mm"
+	environment = "01jd8x3k7q0000000000000000"
+	other       = "01jd8x3k7q0000000000000001"
+	member      = "01jd8x3k7q00000000000000mm"
 )
 
 func newApp(t *testing.T) *fiber.App {
@@ -35,7 +35,7 @@ func newApp(t *testing.T) *fiber.App {
 	}
 	h := NewHandler(NewStore(sqlDB), nil)
 	app := fiber.New(fiber.Config{ErrorHandler: errors.FiberErrorHandler})
-	r := app.Group("/projects/:project_id/tasks")
+	r := app.Group("/environments/:environment_id/tasks")
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
 	r.Get("/:task_id", h.Get)
@@ -56,9 +56,9 @@ func do(t *testing.T, app *fiber.App, method, path, body string) *http.Response 
 	return res
 }
 
-func create(t *testing.T, app *fiber.App, projectID, title string) Task {
+func create(t *testing.T, app *fiber.App, environmentID, title string) Task {
 	t.Helper()
-	res := do(t, app, "POST", "/projects/"+projectID+"/tasks", `{"title":"`+title+`"}`)
+	res := do(t, app, "POST", "/environments/"+environmentID+"/tasks", `{"title":"`+title+`"}`)
 	if res.StatusCode != fiber.StatusCreated {
 		t.Fatalf("create: status %d", res.StatusCode)
 	}
@@ -76,7 +76,7 @@ type listBody struct {
 
 func list(t *testing.T, app *fiber.App, query string) listBody {
 	t.Helper()
-	res := do(t, app, "GET", "/projects/"+project+"/tasks"+query, "")
+	res := do(t, app, "GET", "/environments/"+environment+"/tasks"+query, "")
 	if res.StatusCode != 200 {
 		t.Fatalf("list%s: status %d", query, res.StatusCode)
 	}
@@ -89,8 +89,8 @@ func list(t *testing.T, app *fiber.App, query string) listBody {
 
 func TestCreate(t *testing.T) {
 	app := newApp(t)
-	task := create(t, app, project, "Launch")
-	if task.ProjectID != project || task.CreatedBy != member || task.Status != "todo" {
+	task := create(t, app, environment, "Launch")
+	if task.EnvironmentID != environment || task.CreatedBy != member || task.Status != "todo" {
 		t.Fatalf("task = %+v", task)
 	}
 	if len(task.ID) != 26 || task.ID != strings.ToLower(task.ID) {
@@ -100,7 +100,7 @@ func TestCreate(t *testing.T) {
 
 func TestCreateNeedsMember(t *testing.T) {
 	app := newApp(t)
-	req := httptest.NewRequest("POST", "/projects/"+project+"/tasks", strings.NewReader(`{"title":"Launch"}`))
+	req := httptest.NewRequest("POST", "/environments/"+environment+"/tasks", strings.NewReader(`{"title":"Launch"}`))
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req)
 	if err != nil {
@@ -119,13 +119,13 @@ func TestCreateNeedsMember(t *testing.T) {
 	}
 }
 
-func TestScopedByProject(t *testing.T) {
+func TestScopedByEnvironment(t *testing.T) {
 	app := newApp(t)
 	task := create(t, app, other, "Elsewhere")
 	for _, method := range []string{"GET", "PATCH", "DELETE"} {
-		res := do(t, app, method, "/projects/"+project+"/tasks/"+task.ID, `{"title":"x"}`)
+		res := do(t, app, method, "/environments/"+environment+"/tasks/"+task.ID, `{"title":"x"}`)
 		if res.StatusCode != fiber.StatusNotFound {
-			t.Fatalf("%s from another project: status %d", method, res.StatusCode)
+			t.Fatalf("%s from another environment: status %d", method, res.StatusCode)
 		}
 	}
 	if all := list(t, app, ""); len(all.Tasks) != 0 {
@@ -137,7 +137,7 @@ func TestListPages(t *testing.T) {
 	app := newApp(t)
 	var ids []string
 	for _, title := range []string{"a", "b", "c"} {
-		ids = append(ids, create(t, app, project, title).ID)
+		ids = append(ids, create(t, app, environment, title).ID)
 	}
 
 	first := list(t, app, "?limit=2")
@@ -156,7 +156,7 @@ func TestListPages(t *testing.T) {
 func TestAuditDetails(t *testing.T) {
 	app := newApp(t)
 
-	res := do(t, app, "POST", "/projects/"+project+"/tasks", `{"title":"Launch"}`)
+	res := do(t, app, "POST", "/environments/"+environment+"/tasks", `{"title":"Launch"}`)
 	var task Task
 	if err := json.NewDecoder(res.Body).Decode(&task); err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func TestAuditDetails(t *testing.T) {
 		t.Fatalf("create details = %s, want %s", got, want)
 	}
 
-	path := "/projects/" + project + "/tasks/" + task.ID
+	path := "/environments/" + environment + "/tasks/" + task.ID
 	res = do(t, app, "PATCH", path, `{"status":"done"}`)
 	if got, want := res.Header.Get(audit.DetailsHeader), `{"status":{"from":"todo","to":"done"}}`; got != want {
 		t.Fatalf("update details = %s, want %s", got, want)

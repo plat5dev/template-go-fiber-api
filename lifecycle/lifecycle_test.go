@@ -77,10 +77,10 @@ func setup(t *testing.T, f *feed) (*Consumer, *tasks.Store) {
 	return New(srv.URL, sqlDB, store, zerolog.Nop()), store
 }
 
-func addTask(t *testing.T, store *tasks.Store, id, projectID string) {
+func addTask(t *testing.T, store *tasks.Store, id, environmentID string) {
 	t.Helper()
 	err := store.Insert(context.Background(), &tasks.Task{
-		ID: id, ProjectID: projectID, Title: "t", Status: "todo",
+		ID: id, EnvironmentID: environmentID, Title: "t", Status: "todo",
 		CreatedBy: "01jd8x3k7q00000000000000mm", CreatedAt: "now", UpdatedAt: "now",
 	})
 	if err != nil {
@@ -88,22 +88,22 @@ func addTask(t *testing.T, store *tasks.Store, id, projectID string) {
 	}
 }
 
-func count(t *testing.T, store *tasks.Store, projectID string) int {
+func count(t *testing.T, store *tasks.Store, environmentID string) int {
 	t.Helper()
-	list, _, err := store.ListByProject(context.Background(), projectID, pagination.Page{Limit: 100})
+	list, _, err := store.ListByEnvironment(context.Background(), environmentID, pagination.Page{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return len(list)
 }
 
-func TestPollDeletesPurgedProjectsTasks(t *testing.T) {
+func TestPollDeletesPurgedEnvironmentsTasks(t *testing.T) {
 	f := &feed{events: []Event{
-		{ID: "7", Type: "node.created", Kind: "project", NodeID: purged},
-		{ID: "8", Type: "node.deleted", Kind: "project", NodeID: kept},
+		{ID: "7", Type: "node.created", Kind: "environment", NodeID: purged},
+		{ID: "8", Type: "node.deleted", Kind: "environment", NodeID: kept},
 		{ID: "9", Type: "member.removed"},
 		{ID: "10", Type: "node.purged", Kind: "organization", NodeID: kept},
-		{ID: "11", Type: "node.purged", Kind: "project", NodeID: purged},
+		{ID: "11", Type: "node.purged", Kind: "environment", NodeID: purged},
 	}}
 	c, store := setup(t, f)
 	addTask(t, store, "01jd8x3k7q0000000000000t01", purged)
@@ -113,10 +113,10 @@ func TestPollDeletesPurgedProjectsTasks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n := count(t, store, purged); n != 0 {
-		t.Fatalf("purged project has %d tasks", n)
+		t.Fatalf("purged environment has %d tasks", n)
 	}
 	if n := count(t, store, kept); n != 1 {
-		t.Fatalf("other project has %d tasks, want 1", n)
+		t.Fatalf("other environment has %d tasks, want 1", n)
 	}
 	// Three pages in one poll: has_more reads again at once, from each page's last id.
 	if got := f.asked; len(got) != 3 || got[0] != "" || got[1] != "8" || got[2] != "10" {
@@ -136,7 +136,7 @@ func TestPollDeletesPurgedProjectsTasks(t *testing.T) {
 }
 
 func TestActIsIdempotent(t *testing.T) {
-	f := &feed{events: []Event{{ID: "3", Type: "node.purged", Kind: "project", NodeID: purged}}}
+	f := &feed{events: []Event{{ID: "3", Type: "node.purged", Kind: "environment", NodeID: purged}}}
 	c, store := setup(t, f)
 	addTask(t, store, "01jd8x3k7q0000000000000t01", purged)
 
@@ -146,12 +146,12 @@ func TestActIsIdempotent(t *testing.T) {
 		}
 	}
 	if n := count(t, store, purged); n != 0 {
-		t.Fatalf("purged project has %d tasks", n)
+		t.Fatalf("purged environment has %d tasks", n)
 	}
 }
 
 func TestPollFailureKeepsCursor(t *testing.T) {
-	f := &feed{events: []Event{{ID: "3", Type: "node.created", Kind: "project", NodeID: kept}}, fail: true}
+	f := &feed{events: []Event{{ID: "3", Type: "node.created", Kind: "environment", NodeID: kept}}, fail: true}
 	c, _ := setup(t, f)
 
 	if err := c.Poll(context.Background()); err == nil {

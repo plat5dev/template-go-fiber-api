@@ -1,8 +1,9 @@
 // Package lifecycle follows identity's lifecycle feed, so the API's data goes when its
-// project does (plat5 docs/concepts/lifecycle.md#lifecycle-events).
+// environment does (plat5 docs/concepts/lifecycle.md#lifecycle-events).
 //
-// The only event it acts on is node.purged for a project: that project's tasks are
-// deleted. Tasks are authored, so member.removed keeps them, and there is no background
+// The only event it acts on is node.purged for an environment: that environment's tasks
+// are deleted. A purged project's environments are purged with it, each with its own
+// event. Tasks are authored, so member.removed keeps them, and there is no background
 // work to stop on node.deleted. The cursor is the last event id acted on, kept in SQLite
 // and advanced after acting; acting again on the same event changes nothing.
 package lifecycle
@@ -107,13 +108,13 @@ func (c *Consumer) Poll(ctx context.Context) error {
 }
 
 func (c *Consumer) act(ctx context.Context, e Event) error {
-	if e.Type != "node.purged" || e.Kind != "project" {
+	if e.Type != "node.purged" || e.Kind != "environment" {
 		return nil
 	}
-	if err := c.tasks.DeleteByProject(ctx, e.NodeID); err != nil {
+	if err := c.tasks.DeleteByEnvironment(ctx, e.NodeID); err != nil {
 		return err
 	}
-	c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged project's tasks deleted")
+	c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged environment's tasks deleted")
 	return nil
 }
 
