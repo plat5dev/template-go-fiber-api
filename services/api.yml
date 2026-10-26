@@ -10,13 +10,13 @@ api:
       routes:
         - path: /tasks
           methods:
-            GET: { required_permissions: [environment:read] }
-            POST: { required_permissions: [environment:write] }
+            GET: { required_permissions: [project:read] }
+            POST: { required_permissions: [project:write] }
         - path: /tasks/{task_id}
           methods:
-            GET: { required_permissions: [environment:read] }
-            PATCH: { required_permissions: [environment:write] }
-            DELETE: { required_permissions: [environment:write] }
+            GET: { required_permissions: [project:read] }
+            PATCH: { required_permissions: [project:write] }
+            DELETE: { required_permissions: [project:write] }
     user:
       routes:
         - path: /user/profile

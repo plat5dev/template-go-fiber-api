@@ -5,10 +5,14 @@ identity:
   url: http://identity:3000
   # Service accounts belong to an organization, for automation across it, or to
   # an environment, for that environment's keys; not to a project. People join
-  # an organization, or a project as a guest; not an environment. Turning off a
-  # collection turns off what's below it. Remove a line to have them there too.
+  # an organization, or a project as a guest; they aren't bound at an
+  # environment, so it takes no invites and no new bindings: a service account
+  # gets its binding when it's created. Turning off a collection turns off
+  # what's below it. Remove a line to have them there too.
   kinds:
     project:
       resources: { service_accounts: false }
     environment:
-      resources: { invites: false }
+      resources:
+        invites: false
+        bindings: { methods: { POST: false } }

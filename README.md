@@ -10,10 +10,10 @@ Projects and their environments are Plat5 nodes, kinds in `plat5.yml` (organizat
 
 | Public (gateway) | The API's own path | Permission |
 |--|--|--|
-| `GET …/envs/{environment}/tasks` | `GET /environments/{environment_id}/tasks` | `environment:read` |
-| `POST …/envs/{environment}/tasks` | `POST /environments/{environment_id}/tasks` | `environment:write` |
-| `GET …/envs/{environment}/tasks/{task_id}` | `GET /environments/{environment_id}/tasks/{task_id}` | `environment:read` |
-| `PATCH`, `DELETE …/envs/{environment}/tasks/{task_id}` | the same, on `/environments/{environment_id}/tasks/{task_id}` | `environment:write` |
+| `GET …/envs/{environment}/tasks` | `GET /environments/{environment_id}/tasks` | `project:read` |
+| `POST …/envs/{environment}/tasks` | `POST /environments/{environment_id}/tasks` | `project:write` |
+| `GET …/envs/{environment}/tasks/{task_id}` | `GET /environments/{environment_id}/tasks/{task_id}` | `project:read` |
+| `PATCH`, `DELETE …/envs/{environment}/tasks/{task_id}` | the same, on `/environments/{environment_id}/tasks/{task_id}` | `project:write` |
 | `GET`, `PUT /user/profile` | `/users/{user_id}/profile` | user route |
 
 `…` is `/orgs/{organization}/projects/{project}`. `{organization}`, `{project}` and `{environment}` take a slug or an id; the gateway resolves them and sends the environment's id. They answer only for what the caller may reach: an environment they can't use, or one that doesn't exist, is the gateway's **403**.

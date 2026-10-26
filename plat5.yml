@@ -13,21 +13,21 @@ users:
 kinds:
   organization:
     path: /orgs/{organization}
-    list_permission: organization:read
   project:
     parent: organization
     path: /projects/{project}
-    list_permission: project:read
     bind_creator: false     # its creator works through their roles above
   environment:
     parent: project
     path: /envs/{environment}
-    list_permission: environment:read
+    permission_name: project  # part of its project: reached through project:read, project:write, …
     bind_creator: false
 # The example roles (plat5 docs/reference/config/roles.md). Whoever holds
 # bindings:write can grant any role, so admin, with "*", is the only role that
-# holds it. Every permission a role grants must be one some route requires, or
-# a kind's list_permission: apply refuses the rest.
+# holds it. admin also shapes the tree, creating and deleting projects and
+# environments; developer and viewer work inside it. Every permission a role
+# grants must be one some route requires, or a kind's list_permission: apply
+# refuses the rest.
 roles:
   admin:
     permissions: ["*"]
@@ -37,8 +37,11 @@ roles:
     bindable_at: [organization]
   developer:
     includes: [member]
-    permissions: [project:create, project:read, project:write, project:bindings:read,
-      environment:create, environment:read, environment:write, environment:bindings:read]
+    permissions: [project:read, project:write, project:bindings:read]
+    bindable_at: [organization, project, environment]
+  viewer:
+    includes: [member]
+    permissions: [project:read]
     bindable_at: [organization, project, environment]
 creator_role: admin
 # Rate limits (plat5 docs/reference/config/rate-limits.md). default is every
