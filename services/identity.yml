@@ -4,9 +4,11 @@
 identity:
   url: http://identity:3000
   # Service accounts belong to an organization, for automation across it, or to
-  # an environment, for that environment's keys. Not to a project: a key across
-  # a project is an organization's service account bound at the project. Remove
-  # this kinds block to have them at projects too.
+  # an environment, for that environment's keys; not to a project. People join
+  # an organization, or a project as a guest; not an environment. Turning off a
+  # collection turns off what's below it. Remove a line to have them there too.
   kinds:
     project:
-      resources: { service_accounts: false, service_account: false, keys: false, key: false }
+      resources: { service_accounts: false }
+    environment:
+      resources: { invites: false }

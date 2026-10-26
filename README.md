@@ -31,9 +31,9 @@ Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 
 | File | What |
 |------|------|
-| `plat5.yml` | The deployment's config: settings, the `organization`, `project` and `environment` kinds, the example roles (`admin`, `member`, `developer`), `creator_role`, the `default` rate limit, and the service files ([plat5 `docs/concepts/config.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/config.md#the-config)) |
+| `plat5.yml` | The deployment's config: settings, the `organization`, `project` and `environment` kinds (projects and environments don't bind their creator), the example roles (`admin`, `member`, `developer`), `creator_role`, the `default` rate limit, and the service files ([plat5 `docs/concepts/config.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/config.md#the-config)) |
 | `services/api.yml` | This API's service file: its url (`http://api:3000`) and its routes, in the `environment` and `user` scopes ([services](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/services.md)) |
-| `services/identity.yml`, `services/audit.yml` | Identity's and audit's service files: their urls, and identity's one override: no service accounts at projects, so they belong to an organization or an environment ([resources](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/resources.md)) |
+| `services/identity.yml`, `services/audit.yml` | Identity's and audit's service files: their urls, and identity's overrides: no service accounts at projects, so they belong to an organization or an environment, and no invites at environments ([resources](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/resources.md)) |
 | `plat5.dev.yml` | How `plat5 start` runs the project on your machine: image versions, modules, and `app.compose` |
 | `docker-compose.yml` | The API's container, `api`, on port 3000 |
 | `routes.operator.yml` | What the operator plane may call on this API: the read routes, by environment id (operator `docs/reference/routes.md`) |
