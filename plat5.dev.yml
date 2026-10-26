@@ -1,17 +1,18 @@
 # How plat5 start runs this project on your machine. A deployment never reads
 # it: the deployment's config is plat5.yml. See `plat5 start --help`.
 project_id: go-fiber-api
-cli: ">=0.8.0"  # the oldest plat5 CLI that reads this file
+cli: ">=0.9.0"  # the oldest plat5 CLI that reads this file
 
 # Image tags: the releases this starter runs on.
 versions:
-  plat5: v0.8.0
+  plat5: v0.9.0
   auth: v0.2.2
 
 # What plat5 start runs beside Plat5. plat5 start -x <module> skips one for a run.
 modules:
   auth: true           # Plat5 Auth: sign-in for your users (dev mode)
   observability: true  # Grafana with logs, traces, metrics
+  operator: false      # the operator plane: plat5 init sets it up in a project
 
 # Your app. plat5 start runs it after Plat5 (-x app to run it yourself).
 # services/api.yml's url names its compose service (http://api:3000).
