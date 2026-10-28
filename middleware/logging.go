@@ -28,14 +28,14 @@ type callerID struct {
 }
 
 // callerIDs are the ids the front door gave this request (plat5 docs/reference/telemetry.md):
-// the user on a user route, the project node and the caller's member on a project route.
+// the user on a user route, the environment node and the caller's member on an environment route.
 // Log fields use them as named; span attributes add the plat5. prefix.
 func callerIDs(c fiber.Ctx) []callerID {
 	var ids []callerID
 	if v := c.Params("user_id"); v != "" {
 		ids = append(ids, callerID{"user_id", v})
 	}
-	if v := c.Params("project_id"); v != "" {
+	if v := c.Params("environment_id"); v != "" {
 		ids = append(ids, callerID{"node_id", v})
 	}
 	if v := c.Get("X-Plat5-Member-Id"); v != "" {
