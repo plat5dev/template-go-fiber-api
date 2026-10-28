@@ -20,10 +20,10 @@ Projects and their environments are Plat5 nodes, kinds in `plat5.yml` (organizat
 
 | Data | Keyed by | Fields |
 |------|----------|--------|
-| Task | The environment's node id | `id`, `environment_id`, `title`, `status` (`todo`, `in_progress`, `done`), `created_by`, `created_at`, `updated_at` |
+| Task | The environment's node id | `id`, `environment_id`, `title`, `status` (`todo`, `in_progress`, `done`), `assignee_id` (a member id, or `null`), `created_by`, `created_at`, `updated_at` |
 | Profile | The user id | `user_id`, `bio`, `created_at`, `updated_at` |
 
-A task is authored: `created_by` is the member id of whoever created it, and stays theirs if they leave the tree ([where a field goes](https://github.com/plat5dev/plat5/blob/master/docs/concepts/model.md#where-a-field-goes)). A profile is the person's, the same in every tree, so it sits on a user route. The person's name is identity's (`GET /user`), not the profile's.
+A task is authored: `created_by` is the member id of whoever created it, and stays theirs if they leave the tree ([where a field goes](https://github.com/plat5dev/plat5/blob/master/docs/concepts/model.md#where-a-field-goes)). Its `assignee_id` is a member of the same tree who can see the project, checked with identity when it's set ([Checking an assignee](#checking-an-assignee)). A profile is the person's, the same in every tree, so it sits on a user route. The person's name is identity's (`GET /user`), not the profile's.
 
 Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 
@@ -49,24 +49,50 @@ Only front doors may reach the API: Plat5's gateway, an operator plane, anything
 |----------|------|----|
 | The environment's id | The path, `/environments/{environment_id}/…`, written by `upstream_prefix: /environments/{environment.id}` | Task routes |
 | The caller's member id | `X-Plat5-Member-Id` | Task creates (required: **400** `INVALID_REQUEST` without it); request logs |
+| The environment's project id | `X-Plat5-Project-Id` | Task creates and updates that set an assignee (required there: **400** `INVALID_REQUEST` without it) |
 | The caller's user id | The path, `/users/{user_id}/profile`, written by `upstream: /users/{user.id}/profile` | Profile routes |
 | `X-Request-ID` | The front door | Every request: logged, and in error bodies. Never set on a response |
 | `traceparent` | The front door | Every request: the server span's parent |
 
-The gateway also sends the same ids as `X-Plat5-Environment-Id`, `X-Plat5-Project-Id`, `X-Plat5-Organization-Id` and `X-Plat5-User-Id`; the API reads the path instead. It never sees `Authorization`, a slug, a principal id, or the caller's permissions or role ([plat5 `docs/reference/headers.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/headers.md)).
+The gateway also sends `X-Plat5-Environment-Id`, `X-Plat5-Organization-Id` and `X-Plat5-User-Id`; the API reads the environment's and the user's ids from the path, and has no use for the organization's. It never sees `Authorization`, a slug, a principal id, or the caller's permissions or role ([plat5 `docs/reference/headers.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/headers.md)).
 
 Every lookup is scoped by the environment id in the path, and nothing checks that the environment exists or that the caller may act: the front door decided. A task id under another environment is **404**.
 
+## Checking an assignee
+
+The caller may assign: the gateway let them write. The assignee isn't the caller, so the gateway decided nothing about them, and the API asks identity before writing a body that sets one ([plat5 `docs/guides/write-a-service.md`](https://github.com/plat5dev/plat5/blob/master/docs/guides/write-a-service.md#checking-access-outside-a-request)), in `access/`:
+
+```
+POST {IDENTITY_INTERNAL_URL}/access/v1/evaluation
+{ "subject":  { "type": "member",  "id": "<assignee_id>" },
+  "resource": { "type": "project", "id": "<X-Plat5-Project-Id>" },
+  "action":   { "name": "<TASK_ASSIGNEE_PERMISSION>" } }
+```
+
+It sends the request's `traceparent` and `X-Request-ID`. After the body (**422**) and, on `PATCH`, the task (**404**), it reads `X-Plat5-Project-Id` (**400** `INVALID_REQUEST` without it), asks, and then writes or doesn't:
+
+| Identity answers | The API |
+|------------------|---------|
+| `200 {"decision": true}` | Writes |
+| `200 {"decision": false}` | **422** `VALIDATION_ERROR`, `That person can't see this project.`, at `assignee_id`. Nothing written |
+| Anything else, or `IDENTITY_INTERNAL_URL` unset | **503** `SERVICE_UNAVAILABLE`, logged with the request id. Nothing written: no answer is no |
+
+`null` unassigns and an absent `assignee_id` leaves the task's as it is; neither asks. Anything but a lowercase ULID or `null` is **422** at `assignee_id`.
+
+`TASK_ASSIGNEE_PERMISSION` names the permission, and the API won't start without it. The name is the deployment's, not the code's: the starter's is `project:read`, the permission `services/api.yml` requires to read an environment's tasks, so an assignee is someone who can see them. A deployment that renames that permission sets this too; otherwise identity answers `false` for everyone and every assignee is refused. The resource is the `project` kind, its id from `X-Plat5-Project-Id`, both following `plat5.yml`'s kinds.
+
 ## Following the lifecycle
 
-The API reads identity's lifecycle feed, `GET {IDENTITY_INTERNAL_URL}/internal/lifecycle-events?starting_after=<id>&limit=100` ([plat5 `docs/concepts/lifecycle.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#lifecycle-events)), in `lifecycle/`.
+The API reads identity's two feeds ([plat5 `docs/concepts/lifecycle.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#lifecycle-events)), in `lifecycle/`: tasks are tree data, keyed by an environment's id, and a profile is user-route data, keyed by a user id.
 
-| Event | The API |
-|-------|---------|
-| `node.purged` with `kind: environment` | Deletes that environment's tasks. A purged project's environments are purged with it, each with its own event |
-| Everything else | Nothing. Tasks are authored, so `member.removed` keeps them, and there's no background work to stop on `node.deleted` |
+| Feed | On `IDENTITY_INTERNAL_URL` | Events in | The API |
+|------|----------------------------|-----------|---------|
+| Tree | `GET /internal/tree-events` | `tree_events` | On `node.purged` with `kind: environment`, deletes that environment's tasks. A purged project's environments are purged with it, each with its own event |
+| User | `GET /internal/user-events` | `user_events` | On `user.deleted`, deletes that person's profile |
 
-It polls every 5 seconds, and reads again at once while `has_more` is `true`. The cursor, the last event `id` acted on, is kept in SQLite (`lifecycle_cursor`) and advanced after acting; deleting a purged environment's tasks again changes nothing, so an event read twice is harmless. A failed poll is logged and tried on the next tick. With `IDENTITY_INTERNAL_URL` unset the feed isn't read, and the API says so once at boot.
+Every other event needs nothing. Tasks are authored, so `member.removed` keeps them; there's no background work to stop on `node.deleted`; and a profile is made on the person's first call, not on `user.created`.
+
+Every 5 seconds it reads the tree feed to its end, then the user feed, each with `?starting_after=<cursor>&limit=100` and again at once while `has_more` is `true`. Each feed has its own cursor, the last event `id` acted on, kept in SQLite (`feed_cursors`, a row each for `tree` and `user`) and advanced after acting on each page. Deleting a purged environment's tasks or a deleted person's profile again changes nothing, so an event read twice is harmless. A failed read of one feed is logged, doesn't stop the other, and is tried on the next tick. With `IDENTITY_INTERNAL_URL` unset neither feed is read, and the API says so once at boot.
 
 ## Lists
 
@@ -84,8 +110,8 @@ The gateway records each write before it reaches this service. Each write says w
 
 | Write | Details |
 |-------|---------|
-| `POST` tasks | `task_id`, `title`, `status`. Created: the task id |
-| `PATCH` a task | `title`, `status` as changes |
+| `POST` tasks | `task_id`, `title`, `status`, `assignee_id`. Created: the task id |
+| `PATCH` a task | `title`, `status`, `assignee_id` as changes |
 | `PUT` the profile | `bio` as a change |
 | `DELETE` a task | None: the route and its path say what happened |
 
@@ -118,10 +144,10 @@ To run the API on your own machine instead (your debugger, your editor's runner)
 
 ```bash
 plat5 start -x app
-go run .
+TASK_ASSIGNEE_PERMISSION=project:read go run .
 ```
 
-`-x app` runs everything but the API, and points the gateway's `api` at your machine, so the API must listen on port 3000. Identity's internal port isn't published there, so the lifecycle feed isn't read in this mode.
+`-x app` runs everything but the API, and points the gateway's `api` at your machine, so the API must listen on port 3000. Identity's internal port isn't published there, so in this mode the feeds aren't read and a task with an assignee is a **503**.
 
 `plat5 stop` stops it all; data is kept.
 
@@ -152,10 +178,10 @@ A `GET …/envs/{environment}/stats` for an environment, end to end.
 ## Commands
 
 ```bash
-go run .          # start
-go test ./...     # unit tests
+TASK_ASSIGNEE_PERMISSION=project:read go run .  # start
+go test ./...                                   # unit tests
 go vet ./...
-air -c .air.toml  # hot reload (optional)
+air -c .air.toml                                # hot reload (optional)
 ```
 
 ## Ports
@@ -174,7 +200,8 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `PORT` | `3000` | Public |
 | `INTERNAL_PORT` | `3001` | Health + `/metrics` |
 | `DATABASE_PATH` | `./data/app.db` | SQLite file |
-| `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for the lifecycle feed. The compose file sets `http://identity:3001`. Unset → the feed isn't read |
+| `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for its feeds and the assignee check. The compose file sets `http://identity:3001`. Unset → the feeds aren't read, and a task with an assignee is a **503** |
+| `TASK_ASSIGNEE_PERMISSION` | required | The permission an assignee needs on the task's project ([Checking an assignee](#checking-an-assignee)). The compose file sets `project:read`. Unset or empty → the API exits at boot |
 | `OTEL_SERVICE_NAME` | `api` | Resource `service.name` |
 | `OTEL_SERVICE_NAMESPACE` | `api` | Resource `service.namespace` |
 | `OTEL_SERVICE_VERSION` | `CI_COMMIT_TAG`, else `0.0.0` | Resource `service.version` |
@@ -214,12 +241,13 @@ Health and `/metrics` are on the internal app (not OTel-instrumented).
 ## Layout
 
 ```
-main.go              # dual listen: public + internal; starts the lifecycle reader
+main.go              # dual listen: public + internal; starts the feeds' reader
 db/                  # SQLite open + schema
 errors/              # Plat5 error envelope
 audit/               # X-Plat5-Audit-Details / -Created
 pagination/          # limit, starting_after, has_more
-lifecycle/           # identity's lifecycle feed: purged environments
+lifecycle/           # identity's tree and user feeds: purged environments, deleted accounts
+access/              # identity's access evaluation: assignees
 metrics/             # Prometheus SoT
 middleware/          # request logger
 telemetry/           # OTel init (exporter matrix)

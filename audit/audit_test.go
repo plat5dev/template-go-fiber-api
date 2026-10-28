@@ -20,6 +20,23 @@ func TestChangedSkipsEqual(t *testing.T) {
 	}
 }
 
+func TestChangedNullable(t *testing.T) {
+	a, b, a2 := "a", "b", "a"
+	d := Details{}
+	d.ChangedNullable("same", &a, &a2)
+	d.ChangedNullable("both_null", nil, nil)
+	d.ChangedNullable("set", nil, &a)
+	d.ChangedNullable("unset", &a, nil)
+	d.ChangedNullable("changed", &a, &b)
+	got, err := Encode(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"changed":{"from":"a","to":"b"},"set":{"from":null,"to":"a"},"unset":{"from":"a","to":null}}`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
 func TestEncodeIsVisibleASCII(t *testing.T) {
 	got, err := Encode(Details{"name": Change{From: "café", To: "🚀"}})
 	if err != nil {

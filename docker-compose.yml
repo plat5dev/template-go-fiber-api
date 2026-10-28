@@ -20,8 +20,13 @@ services:
       OTEL_SERVICE_NAME: api
       OTEL_SERVICE_NAMESPACE: api
       DEPLOYMENT_ENV: docker
-      # Identity's internal port, for the lifecycle feed (purged projects).
+      # Identity's internal port, for its tree and user feeds and the assignee check.
       IDENTITY_INTERNAL_URL: http://identity:3001
+      # The permission a task's assignee needs on its project: the one
+      # services/api.yml requires to read an environment's tasks. A deployment
+      # that renames it sets this too; otherwise the check fails closed and
+      # refuses every assignee.
+      TASK_ASSIGNEE_PERMISSION: ${TASK_ASSIGNEE_PERMISSION:-project:read}
       # Where to send traces and metrics. plat5 start sets it when observability is on.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
 

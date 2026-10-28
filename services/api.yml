@@ -2,6 +2,9 @@
 # environment, and the person's own profile. The gateway forwards an
 # environment's routes with its id in the path and the caller's member id in
 # X-Plat5-Member-Id, and the profile with the caller's user id in the path.
+# The API checks a task's assignee against TASK_ASSIGNEE_PERMISSION on the
+# project, which matches the permission reading tasks requires here
+# (project:read): rename one, rename the other.
 api:
   url: http://api:3000
   scopes:

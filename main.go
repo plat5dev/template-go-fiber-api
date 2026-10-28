@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 
+	"github.com/example/go-fiber-api/access"
 	"github.com/example/go-fiber-api/db"
 	"github.com/example/go-fiber-api/errors"
 	"github.com/example/go-fiber-api/lifecycle"
@@ -22,6 +23,14 @@ import (
 )
 
 func main() {
+	// The permission an assignee needs on the task's project: the deployment's name for it,
+	// never the code's.
+	assigneePermission := os.Getenv("TASK_ASSIGNEE_PERMISSION")
+	if assigneePermission == "" {
+		log.Fatal("TASK_ASSIGNEE_PERMISSION is unset or empty: set it to the permission an assignee needs on the task's project (the starter's is project:read)")
+	}
+	identityURL := os.Getenv("IDENTITY_INTERNAL_URL")
+
 	ctx := context.Background()
 	metrics.Init()
 
@@ -45,11 +54,13 @@ func main() {
 		log.Fatalf("failed to migrate database: %v", err)
 	}
 
+	baseLogger := telem.Logger()
+
 	profileStore := profiles.NewStore(sqlDB)
 	taskStore := tasks.NewStore(sqlDB)
 
 	profileHandler := profiles.NewHandler(profileStore, telem)
-	taskHandler := tasks.NewHandler(taskStore, telem)
+	taskHandler := tasks.NewHandler(taskStore, telem, access.New(identityURL, telem.Propagator(), baseLogger), assigneePermission)
 
 	app := fiber.New(fiber.Config{
 		AppName:      "api",
@@ -104,16 +115,15 @@ func main() {
 		internalPort = "3001"
 	}
 
-	baseLogger := telem.Logger()
 	baseLogger.Info().
 		Str("port", port).
 		Str("internal_port", internalPort).
 		Msg("starting api server")
 
-	if identityURL := os.Getenv("IDENTITY_INTERNAL_URL"); identityURL != "" {
-		go lifecycle.New(identityURL, sqlDB, taskStore, baseLogger).Run(ctx)
+	if identityURL != "" {
+		go lifecycle.New(identityURL, sqlDB, taskStore, profileStore, baseLogger).Run(ctx)
 	} else {
-		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading the lifecycle feed, so a purged environment's tasks are kept")
+		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's feeds, so a purged environment's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
 	}
 
 	go func() {

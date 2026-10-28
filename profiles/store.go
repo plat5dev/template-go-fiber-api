@@ -59,3 +59,12 @@ func (s *Store) Update(ctx context.Context, p *Profile) error {
 	metrics.RecordDBOperation("profiles.update", time.Since(start), err)
 	return err
 }
+
+// Delete deletes the person's profile, with their account. Deleting none is fine, so it can
+// run again for the same person.
+func (s *Store) Delete(ctx context.Context, userID string) error {
+	start := time.Now()
+	_, err := s.db.ExecContext(ctx, `DELETE FROM profiles WHERE user_id = ?`, userID)
+	metrics.RecordDBOperation("profiles.delete", time.Since(start), err)
+	return err
+}

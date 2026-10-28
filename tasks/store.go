@@ -10,15 +10,17 @@ import (
 )
 
 // Task is authored data: CreatedBy is the member who made it, and stays theirs if they
-// leave the tree (plat5 docs/concepts/model.md#where-a-field-goes).
+// leave the tree (plat5 docs/concepts/model.md#where-a-field-goes). AssigneeID is a member
+// in the same tree, or nil (null in JSON).
 type Task struct {
-	ID            string `json:"id"`
-	EnvironmentID string `json:"environment_id"`
-	Title         string `json:"title"`
-	Status        string `json:"status"`
-	CreatedBy     string `json:"created_by"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID            string  `json:"id"`
+	EnvironmentID string  `json:"environment_id"`
+	Title         string  `json:"title"`
+	Status        string  `json:"status"`
+	AssigneeID    *string `json:"assignee_id"`
+	CreatedBy     string  `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 type Store struct {
@@ -29,10 +31,10 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-const columns = `id, environment_id, title, status, created_by, created_at, updated_at`
+const columns = `id, environment_id, title, status, assignee_id, created_by, created_at, updated_at`
 
 func scan(row interface{ Scan(...any) error }, t *Task) error {
-	return row.Scan(&t.ID, &t.EnvironmentID, &t.Title, &t.Status, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
+	return row.Scan(&t.ID, &t.EnvironmentID, &t.Title, &t.Status, &t.AssigneeID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 }
 
 // ListByEnvironment returns one page of the environment's tasks in id order, and whether
@@ -86,8 +88,8 @@ func (s *Store) Insert(ctx context.Context, t *Task) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO tasks (`+columns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.EnvironmentID, t.Title, t.Status, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.EnvironmentID, t.Title, t.Status, t.AssigneeID, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
 	metrics.RecordDBOperation("tasks.insert", time.Since(start), err)
 	return err
 }
@@ -95,9 +97,9 @@ func (s *Store) Insert(ctx context.Context, t *Task) error {
 func (s *Store) Update(ctx context.Context, t *Task) error {
 	start := time.Now()
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE tasks SET title = ?, status = ?, updated_at = ?
+		UPDATE tasks SET title = ?, status = ?, assignee_id = ?, updated_at = ?
 		WHERE id = ? AND environment_id = ?`,
-		t.Title, t.Status, t.UpdatedAt, t.ID, t.EnvironmentID)
+		t.Title, t.Status, t.AssigneeID, t.UpdatedAt, t.ID, t.EnvironmentID)
 	metrics.RecordDBOperation("tasks.update", time.Since(start), err)
 	return err
 }

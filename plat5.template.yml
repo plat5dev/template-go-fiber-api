@@ -18,4 +18,4 @@ app:
 # To run the API on your own machine instead: plat5 start -x app, then
 next:
   - go mod tidy
-  - go run .
+  - TASK_ASSIGNEE_PERMISSION=project:read go run .

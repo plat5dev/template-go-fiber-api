@@ -43,6 +43,13 @@ func (d Details) Changed(field string, from, to string) {
 	}
 }
 
+// ChangedNullable records field when from and to differ, nil being null.
+func (d Details) ChangedNullable(field string, from, to *string) {
+	if (from == nil) != (to == nil) || (from != nil && *from != *to) {
+		d[field] = Change{From: from, To: to}
+	}
+}
+
 // Set puts d on the response. Empty sets nothing, so a write that changed nothing sends
 // no header. Over the cap sets nothing and notes it on the trace: the event still records
 // the request, just not the change.
