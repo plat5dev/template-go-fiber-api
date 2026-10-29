@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/gofiber/contrib/v3/otel"
@@ -22,12 +23,17 @@ import (
 	"github.com/example/go-fiber-api/telemetry"
 )
 
+// permissionName is a permission's name as Plat5's roles write it.
+var permissionName = regexp.MustCompile(`^[a-z0-9:._-]{1,64}$`)
+
+const badAssigneePermission = "TASK_ASSIGNEE_PERMISSION is unset or isn't a permission name ([a-z0-9:._-], at most 64 characters): set it to the permission an assignee needs on the task's project (the starter's is project:read)"
+
 func main() {
 	// The permission an assignee needs on the task's project: the deployment's name for it,
 	// never the code's.
 	assigneePermission := os.Getenv("TASK_ASSIGNEE_PERMISSION")
-	if assigneePermission == "" {
-		log.Fatal("TASK_ASSIGNEE_PERMISSION is unset or empty: set it to the permission an assignee needs on the task's project (the starter's is project:read)")
+	if !permissionName.MatchString(assigneePermission) {
+		log.Fatal(badAssigneePermission)
 	}
 	identityURL := os.Getenv("IDENTITY_INTERNAL_URL")
 
