@@ -567,3 +567,48 @@ func TestWriteFindsNoRow(t *testing.T) {
 		t.Fatalf("delete after delete: %v, %v", ok, err)
 	}
 }
+
+// Keys match exactly: a wrong-case or unknown key is a 422 naming each, in the body's order,
+// before any other check, and nothing is written.
+func TestUnknownFields(t *testing.T) {
+	app, id := newApp(t)
+	task := create(t, app, environment, "Launch")
+	path := "/environments/" + environment + "/tasks"
+	for _, tc := range []struct {
+		method, path, body string
+		paths              []string
+	}{
+		{"POST", path, `{"Title":"x"}`, []string{"Title"}},
+		{"POST", path, `{"title":"x","priority":1}`, []string{"priority"}},
+		{"POST", path, `{"Status":"done","title":"","Assignee_ID":"` + assignee + `"}`, []string{"Status", "Assignee_ID"}},
+		{"PATCH", path + "/" + task.ID, `{"Title":"x"}`, []string{"Title"}},
+		{"PATCH", path + "/01jd8x3k7q00000000000000zz", `{"title":"x","extra":{"a":1}}`, []string{"extra"}},
+	} {
+		res := do(t, app, tc.method, tc.path, tc.body)
+		body := decodeError(t, res)
+		if res.StatusCode != fiber.StatusUnprocessableEntity || body.Error.Code != "VALIDATION_ERROR" || body.Error.Message != tc.paths[0]+" isn't a field." {
+			t.Fatalf("%s %s: status %d, error %+v", tc.method, tc.body, res.StatusCode, body.Error)
+		}
+		f := body.Error.Details.Fields
+		if len(f) != len(tc.paths) {
+			t.Fatalf("%s %s: fields %+v", tc.method, tc.body, f)
+		}
+		for i, p := range tc.paths {
+			if f[i].Path != p || f[i].Message != p+" isn't a field." {
+				t.Fatalf("%s %s: fields[%d] = %+v", tc.method, tc.body, i, f[i])
+			}
+		}
+	}
+	if all := list(t, app, ""); len(all.Tasks) != 1 {
+		t.Fatalf("tasks = %+v", all.Tasks)
+	}
+	if got := get(t, app, task.ID); got.Title != "Launch" || got.UpdatedAt != task.UpdatedAt {
+		t.Fatalf("a refused PATCH wrote: %+v", got)
+	}
+	if got := id.calls(); len(got) != 0 {
+		t.Fatalf("identity asked %q", got)
+	}
+	if res := do(t, app, "PATCH", path+"/"+task.ID, `{"title":"Ship","status":"done","assignee_id":null}`); res.StatusCode != 200 {
+		t.Fatalf("valid PATCH: status %d", res.StatusCode)
+	}
+}

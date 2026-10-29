@@ -27,6 +27,8 @@ A task is authored: `created_by` is the member id of whoever created it, and sta
 
 Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 
+Request bodies match keys exactly; an unknown field is a **422** naming it. `{"Title": …}` isn't `title`: each unknown field is in `details.fields` once, in the body's order, as `{"path": "Title", "message": "Title isn't a field."}`, and the first one's sentence is the `message`. A nested field's path is `address.street`, an array item's `tags[0].name`. A body with an unknown field is refused before its values are checked.
+
 ## The config
 
 | File | What |
@@ -244,7 +246,7 @@ Health and `/metrics` are on the internal app (not OTel-instrumented).
 main.go              # dual listen: public + internal; starts the feeds' reader
 db/                  # SQLite open + schema
 errors/              # Plat5 error envelope
-jsonbody/            # a JSON request body, or a 422 at body
+jsonbody/            # a JSON request body, keys matched exactly, or a 422
 audit/               # X-Plat5-Audit-Details / -Created
 pagination/          # limit, starting_after, has_more
 lifecycle/           # identity's tree and user feeds: purged environments, deleted accounts

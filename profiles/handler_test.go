@@ -126,3 +126,16 @@ func TestBioLimitIsCharacters(t *testing.T) {
 		t.Fatalf("2001 characters: %d at %q, %q", status, path, msg)
 	}
 }
+
+// Keys match exactly: {"Bio": …} is an unknown field, not bio.
+func TestProfileUnknownField(t *testing.T) {
+	app := newApp(t)
+	for _, tc := range []struct{ body, path string }{{`{"Bio":"Hi"}`, "Bio"}, {`{"bio":"Hi","name":"Ada"}`, "name"}} {
+		if status, path, msg := put(t, app, "application/json", tc.body); status != 422 || path != tc.path || msg != tc.path+" isn't a field." {
+			t.Fatalf("%s: %d at %q, %q", tc.body, status, path, msg)
+		}
+	}
+	if status, _, _ := put(t, app, "application/json", `{"bio":"Hi"}`); status != 200 {
+		t.Fatalf("valid: %d", status)
+	}
+}
