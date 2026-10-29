@@ -9,7 +9,9 @@
 deletion_grace: 30d
 reserved_slugs: [new, settings, api, admin]
 users:
-  name_claim: name
+  name:   # which token claims name a person at sign-in, and when (plat5 docs/reference/idp.md)
+    claims: [name, preferred_username]
+    sync: first_sign_in
 kinds:
   organization:
     path: /orgs/{organization}
