@@ -194,7 +194,10 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 		case fiber.StatusUnauthorized:
 			// Authn is the gateway. This service does not return 401.
 			apiErr = InternalError()
-		case fiber.StatusNotFound:
+		case fiber.StatusNotFound, fiber.StatusMethodNotAllowed:
+			// A known path in a method it doesn't serve is the same 404 as an unknown
+			// route: errors.md's codes have no 405. Fiber's Allow header goes with it.
+			c.Response().Header.Del(fiber.HeaderAllow)
 			apiErr = NotFoundError("resource", nil)
 		case fiber.StatusConflict:
 			apiErr = ConflictError("", nil)
@@ -203,8 +206,8 @@ func FiberErrorHandler(c fiber.Ctx, err error) error {
 		case fiber.StatusServiceUnavailable:
 			apiErr = ServiceUnavailableError()
 		default:
+			// Never Fiber's text in message: the fallback sentence (errors.md).
 			apiErr = InternalError()
-			apiErr.Message = e.Message
 		}
 	}
 

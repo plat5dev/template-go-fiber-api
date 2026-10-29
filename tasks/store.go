@@ -94,23 +94,38 @@ func (s *Store) Insert(ctx context.Context, t *Task) error {
 	return err
 }
 
-func (s *Store) Update(ctx context.Context, t *Task) error {
+// Update writes t's fields to the task with its id in its environment, and says whether
+// there was one: false when it's gone, such as deleted since it was read.
+func (s *Store) Update(ctx context.Context, t *Task) (bool, error) {
 	start := time.Now()
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE tasks SET title = ?, status = ?, assignee_id = ?, updated_at = ?
 		WHERE id = ? AND environment_id = ?`,
 		t.Title, t.Status, t.AssigneeID, t.UpdatedAt, t.ID, t.EnvironmentID)
 	metrics.RecordDBOperation("tasks.update", time.Since(start), err)
-	return err
+	return affected(res, err)
 }
 
-func (s *Store) Delete(ctx context.Context, environmentID, taskID string) error {
+// Delete deletes the task with taskID in the environment, and says whether there was one.
+func (s *Store) Delete(ctx context.Context, environmentID, taskID string) (bool, error) {
 	start := time.Now()
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		DELETE FROM tasks WHERE id = ? AND environment_id = ?`,
 		taskID, environmentID)
 	metrics.RecordDBOperation("tasks.delete", time.Since(start), err)
-	return err
+	return affected(res, err)
+}
+
+// affected says whether a write changed a row.
+func affected(res sql.Result, err error) (bool, error) {
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // DeleteByEnvironment deletes every task of an environment, for its purge. Deleting none

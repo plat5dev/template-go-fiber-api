@@ -460,3 +460,110 @@ func TestUpdateOrder(t *testing.T) {
 		t.Fatalf("identity asked %q", got)
 	}
 }
+
+// send is do with the Content-Type given, none when empty.
+func send(t *testing.T, app *fiber.App, contentType, method, path, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Del("Content-Type")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set(MemberHeader, member)
+	req.Header.Set(ProjectHeader, project)
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// A body not sent as JSON is a 422 at body, whatever it holds; JSON with a charset or a
+// +json type parses; a DELETE never reads its body.
+func TestBodyMustBeJSON(t *testing.T) {
+	app, _ := newApp(t)
+	task := create(t, app, environment, "Launch")
+	path := "/environments/" + environment + "/tasks"
+	for _, tc := range []struct{ method, path, contentType, body string }{
+		{"POST", path, "", `{"title":"x"}`},
+		{"POST", path, "", ""},
+		{"POST", path, "text/plain", `{"title":"x"}`},
+		{"POST", path, "application/x-www-form-urlencoded", "title=x"},
+		{"POST", path, "application/json", ""},
+		{"PATCH", path + "/" + task.ID, "", `{"title":"x"}`},
+		{"PATCH", path + "/" + task.ID, "", ""},
+		{"PATCH", path + "/" + task.ID, "text/plain", `{"title":"x"}`},
+	} {
+		res := send(t, app, tc.contentType, tc.method, tc.path, tc.body)
+		body := decodeError(t, res)
+		if res.StatusCode != fiber.StatusUnprocessableEntity || len(body.Error.Details.Fields) != 1 || body.Error.Details.Fields[0].Path != "body" || body.Error.Message != errors.FallbackValidation {
+			t.Fatalf("%s %q %q: status %d, error %+v", tc.method, tc.contentType, tc.body, res.StatusCode, body.Error)
+		}
+	}
+	if got := get(t, app, task.ID); got.Title != "Launch" || got.UpdatedAt != task.UpdatedAt {
+		t.Fatalf("a refused PATCH wrote: %+v", got)
+	}
+	for _, contentType := range []string{"application/json; charset=utf-8", "application/merge-patch+json"} {
+		if res := send(t, app, contentType, "POST", path, `{"title":"x"}`); res.StatusCode != fiber.StatusCreated {
+			t.Fatalf("POST as %q: status %d", contentType, res.StatusCode)
+		}
+	}
+	if res := send(t, app, "application/json", "DELETE", path+"/"+task.ID, ""); res.StatusCode != fiber.StatusNoContent {
+		t.Fatalf("DELETE with a JSON Content-Type and no body: status %d", res.StatusCode)
+	}
+}
+
+// A title's limit counts characters, not bytes.
+func TestTitleLimitIsCharacters(t *testing.T) {
+	app, _ := newApp(t)
+	path := "/environments/" + environment + "/tasks"
+	if res := do(t, app, "POST", path, `{"title":"`+strings.Repeat("é", 255)+`"}`); res.StatusCode != fiber.StatusCreated {
+		t.Fatalf("255 characters: status %d", res.StatusCode)
+	}
+	task := create(t, app, environment, "Launch")
+	for _, tc := range []struct{ method, path string }{{"POST", path}, {"PATCH", path + "/" + task.ID}} {
+		res := do(t, app, tc.method, tc.path, `{"title":"`+strings.Repeat("é", 256)+`"}`)
+		if body := decodeError(t, res); res.StatusCode != fiber.StatusUnprocessableEntity || body.Error.Message != "Title is too long." {
+			t.Fatalf("%s 256 characters: status %d, error %+v", tc.method, res.StatusCode, body.Error)
+		}
+	}
+}
+
+// A scoped write that finds no row, the task gone since it was read, is a 404.
+func TestWriteFindsNoRow(t *testing.T) {
+	t.Setenv("DATABASE_PATH", filepath.Join(t.TempDir(), "app.db"))
+	sqlDB, err := db.Connect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if err := db.Migrate(context.Background(), sqlDB); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(sqlDB)
+	ctx := context.Background()
+	task := &Task{ID: "01jd8x3k7q00000000000000tt", EnvironmentID: environment, Title: "Launch", Status: "todo", CreatedBy: member, CreatedAt: "t", UpdatedAt: "t"}
+	if err := store.Insert(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	moved := *task
+	moved.EnvironmentID = other
+	if ok, err := store.Update(ctx, &moved); err != nil || ok {
+		t.Fatalf("update in another environment: %v, %v", ok, err)
+	}
+	if ok, err := store.Delete(ctx, other, task.ID); err != nil || ok {
+		t.Fatalf("delete in another environment: %v, %v", ok, err)
+	}
+	if ok, err := store.Update(ctx, task); err != nil || !ok {
+		t.Fatalf("update: %v, %v", ok, err)
+	}
+	if ok, err := store.Delete(ctx, environment, task.ID); err != nil || !ok {
+		t.Fatalf("delete: %v, %v", ok, err)
+	}
+	if ok, err := store.Update(ctx, task); err != nil || ok {
+		t.Fatalf("update after delete: %v, %v", ok, err)
+	}
+	if ok, err := store.Delete(ctx, environment, task.ID); err != nil || ok {
+		t.Fatalf("delete after delete: %v, %v", ok, err)
+	}
+}

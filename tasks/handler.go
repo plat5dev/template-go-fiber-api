@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/oklog/ulid/v2"
@@ -11,6 +12,7 @@ import (
 	"github.com/example/go-fiber-api/access"
 	"github.com/example/go-fiber-api/audit"
 	"github.com/example/go-fiber-api/errors"
+	"github.com/example/go-fiber-api/jsonbody"
 	"github.com/example/go-fiber-api/pagination"
 	"github.com/example/go-fiber-api/telemetry"
 )
@@ -49,6 +51,9 @@ type updateBody struct {
 	Status     *string         `json:"status"`
 	AssigneeID json.RawMessage `json:"assignee_id"`
 }
+
+// maxTitle is a title's longest, in characters (Unicode code points), after trimming.
+const maxTitle = 255
 
 var validStatus = map[string]bool{"todo": true, "in_progress": true, "done": true}
 
@@ -116,14 +121,14 @@ func (h *Handler) Create(c fiber.Ctx) error {
 		return errors.InvalidRequestError()
 	}
 	var body createBody
-	if err := c.Bind().Body(&body); err != nil {
-		return errors.FieldError("body", "")
+	if err := jsonbody.Read(c, &body); err != nil {
+		return err
 	}
 	title := strings.TrimSpace(body.Title)
 	if title == "" {
 		return errors.FieldError("title", "Title is required.")
 	}
-	if len(title) > 255 {
+	if utf8.RuneCountInString(title) > maxTitle {
 		return errors.FieldError("title", "Title is too long.")
 	}
 	status := "todo"
@@ -178,8 +183,8 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	environmentID := c.Params("environment_id")
 	taskID := c.Params("task_id")
 	var body updateBody
-	if err := c.Bind().Body(&body); err != nil {
-		return errors.FieldError("body", "")
+	if err := jsonbody.Read(c, &body); err != nil {
+		return err
 	}
 	var title string
 	if body.Title != nil {
@@ -187,7 +192,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 		if title == "" {
 			return errors.FieldError("title", "Title is required.")
 		}
-		if len(title) > 255 {
+		if utf8.RuneCountInString(title) > maxTitle {
 			return errors.FieldError("title", "Title is too long.")
 		}
 	}
@@ -222,8 +227,13 @@ func (h *Handler) Update(c fiber.Ctx) error {
 		t.AssigneeID = assigneeID
 	}
 	t.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	if err := h.store.Update(c.Context(), t); err != nil {
+	updated, err := h.store.Update(c.Context(), t)
+	if err != nil {
 		return errors.InternalError()
+	}
+	// Deleted since the read: the same 404 the read would answer now.
+	if !updated {
+		return errors.NotFoundError("task", taskID)
 	}
 	changes := audit.Details{}
 	changes.Changed("title", before.Title, t.Title)
@@ -243,8 +253,13 @@ func (h *Handler) Delete(c fiber.Ctx) error {
 	if t == nil {
 		return errors.NotFoundError("task", taskID)
 	}
-	if err := h.store.Delete(c.Context(), environmentID, taskID); err != nil {
+	deleted, err := h.store.Delete(c.Context(), environmentID, taskID)
+	if err != nil {
 		return errors.InternalError()
+	}
+	// Deleted since the read: the same 404 the read would answer now.
+	if !deleted {
+		return errors.NotFoundError("task", taskID)
 	}
 	// No audit details: the route and the task id in its path say what happened.
 	return c.SendStatus(fiber.StatusNoContent)

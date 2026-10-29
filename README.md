@@ -244,6 +244,7 @@ Health and `/metrics` are on the internal app (not OTel-instrumented).
 main.go              # dual listen: public + internal; starts the feeds' reader
 db/                  # SQLite open + schema
 errors/              # Plat5 error envelope
+jsonbody/            # a JSON request body, or a 422 at body
 audit/               # X-Plat5-Audit-Details / -Created
 pagination/          # limit, starting_after, has_more
 lifecycle/           # identity's tree and user feeds: purged environments, deleted accounts

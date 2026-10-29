@@ -2,11 +2,13 @@ package profiles
 
 import (
 	"time"
+	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/example/go-fiber-api/audit"
 	"github.com/example/go-fiber-api/errors"
+	"github.com/example/go-fiber-api/jsonbody"
 	"github.com/example/go-fiber-api/telemetry"
 )
 
@@ -18,6 +20,9 @@ type Handler struct {
 func NewHandler(store *Store, telem *telemetry.Telemetry) *Handler {
 	return &Handler{store: store, telem: telem}
 }
+
+// maxBio is a bio's longest, in characters (Unicode code points).
+const maxBio = 2000
 
 // No name here: the person's name is identity's (GET /user), shown in every org.
 type upsertBody struct {
@@ -48,13 +53,13 @@ func (h *Handler) Get(c fiber.Ctx) error {
 func (h *Handler) Upsert(c fiber.Ctx) error {
 	userID := c.Params("user_id")
 	var body upsertBody
-	if err := c.Bind().Body(&body); err != nil {
-		return errors.FieldError("body", "")
+	if err := jsonbody.Read(c, &body); err != nil {
+		return err
 	}
 	if body.Bio == nil {
 		return errors.FieldError("bio", "Bio is required.")
 	}
-	if len(*body.Bio) > 2000 {
+	if utf8.RuneCountInString(*body.Bio) > maxBio {
 		return errors.FieldError("bio", "Bio is too long.")
 	}
 	bio := *body.Bio
