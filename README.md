@@ -33,9 +33,9 @@ Request bodies match keys exactly; an unknown field is a **422** naming it. `{"T
 
 | File | What |
 |------|------|
-| `plat5.yml` | The deployment's config: settings, the `organization`, `project` and `environment` kinds (projects and environments don't bind their creator), the example roles (`admin`, `member`, `developer`), `creator_role`, the `default` rate limit, and the service files ([plat5 `docs/concepts/config.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/config.md#the-config)) |
+| `plat5.yml` | The deployment's config: settings, the `organization`, `project` and `environment` kinds (projects and environments don't bind their creator), the example roles (`admin`, `member`, `developer`), `creator_role`, the `standard` rate limit that `defaults.rate_limit` names, and the service files ([plat5 `docs/concepts/config.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/config.md#the-config)) |
 | `services/api.yml` | This API's service file: its url (`http://api:3000`) and its routes, in the `environment` and `user` scopes ([services](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/services.md)) |
-| `services/identity.yml`, `services/audit.yml` | Identity's and audit's service files: their urls, and identity's overrides: no service accounts at projects, so they belong to an organization or an environment, and no invites at environments ([resources](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/resources.md)) |
+| `services/identity.yml`, `services/audit.yml` | Identity's and audit's service files: their routes at every kind, written by `plat5 routes generate`, less the ones this starter deletes: no service accounts at projects, so they belong to an organization or an environment, and no invites and no binding `POST` at environments. Run it again after changing the kinds, then delete those again ([generated routes](https://github.com/plat5dev/plat5/blob/master/docs/reference/config/generated-routes.md)) |
 | `plat5.dev.yml` | How `plat5 start` runs the project on your machine: image versions, modules, and `app.compose` |
 | `docker-compose.yml` | The API's container, `api`, on port 3000 |
 | `routes.operator.yml` | What the operator plane may call on this API: the read routes, by environment id (operator `docs/reference/routes.md`) |
@@ -179,7 +179,7 @@ A `GET …/envs/{environment}/stats` for an environment, end to end.
             GET: { required_permissions: [stats:read] }
 ```
 
-**3. Grant the permission.** Add `stats:read` to a role's `permissions` in `plat5.yml` (`developer`, say). `admin`'s `"*"` already holds it. A permission a role grants that no route requires is refused at apply, so a typo on either side shows up there.
+**3. Grant the permission.** Add `stats:read` to a role's `permissions` in `plat5.yml` (`developer`, say). `admin`'s `"*"` already holds it.
 
 **4. Apply.** `plat5 apply`, or `plat5 start` again. Nothing restarts.
 
