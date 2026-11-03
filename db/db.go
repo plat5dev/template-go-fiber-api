@@ -59,10 +59,10 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS tasks_environment_id_idx ON tasks (environment_id)`,
-		// The last event acted on in each of identity's feeds: one row per feed, an opaque
-		// decimal string from that feed's own sequence.
+		// The last event acted on in identity's lifecycle log: one row, an opaque decimal
+		// string. Kept with the data it cleans up, so a restore rewinds both together.
 		`CREATE TABLE IF NOT EXISTS feed_cursors (
-			feed TEXT PRIMARY KEY NOT NULL CHECK (feed IN ('tree', 'user')),
+			id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
 			event_id TEXT NOT NULL
 		)`,
 	}

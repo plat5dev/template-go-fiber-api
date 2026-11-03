@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
 	"regexp"
+	"syscall"
 	"time"
 
 	"github.com/gofiber/contrib/v3/otel"
@@ -37,7 +39,10 @@ func main() {
 	}
 	identityURL := os.Getenv("IDENTITY_INTERNAL_URL")
 
-	ctx := context.Background()
+	// SIGINT or SIGTERM ends ctx: both servers shut down, and so does the lifecycle reader,
+	// its read in flight cancelled.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	metrics.Init()
 
 	telem, err := telemetry.Init(ctx)
@@ -126,19 +131,26 @@ func main() {
 		Str("internal_port", internalPort).
 		Msg("starting api server")
 
+	following := make(chan struct{})
 	if identityURL != "" {
-		go lifecycle.New(identityURL, sqlDB, taskStore, profileStore, baseLogger).Run(ctx)
+		go func() {
+			defer close(following)
+			lifecycle.New(identityURL, sqlDB, taskStore, profileStore, baseLogger).Run(ctx)
+		}()
 	} else {
-		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's feeds, so a purged environment's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
+		close(following)
+		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's lifecycle log, so a purged environment's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
 	}
 
 	go func() {
-		if err := internalApp.Listen(":" + internalPort); err != nil {
+		if err := internalApp.Listen(":"+internalPort, fiber.ListenConfig{GracefulContext: ctx}); err != nil {
 			baseLogger.Fatal().Err(err).Msg("internal server exited")
 		}
 	}()
 
-	if err := app.Listen(":" + port); err != nil {
+	if err := app.Listen(":"+port, fiber.ListenConfig{GracefulContext: ctx}); err != nil {
 		baseLogger.Fatal().Err(err).Msg("fiber server exited")
 	}
+	// Wait for the reader, so its last transaction ends before the database closes.
+	<-following
 }

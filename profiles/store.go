@@ -15,12 +15,24 @@ type Profile struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// conn runs the store's statements: the database, or a transaction (WithTx).
+type conn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 type Store struct {
-	db *sql.DB
+	db conn
 }
 
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
+}
+
+// WithTx is the store writing in tx, so its writes commit or roll back with the rest of tx.
+func (s *Store) WithTx(tx *sql.Tx) *Store {
+	return &Store{db: tx}
 }
 
 func (s *Store) FindByUserID(ctx context.Context, userID string) (*Profile, error) {

@@ -1,13 +1,12 @@
-// Package lifecycle follows identity's two feeds, so the API's data goes when its
-// environment or its person does (plat5 docs/concepts/lifecycle.md#lifecycle-events).
+// Package lifecycle follows identity's lifecycle log, so the API's data goes when its
+// environment or its person does (plat5 docs/concepts/lifecycle.md#following-the-log).
 //
-// On the tree feed, the only event it acts on is node.purged for an environment: that
-// environment's tasks are deleted. A purged project's environments are purged with it,
-// each with its own event. Tasks are authored, so member.removed keeps them, and there is
-// no background work to stop on node.deleted. On the user feed, the only one is
-// user.deleted: that person's profile is deleted. Each feed has its own cursor, the last
-// event id acted on, kept in SQLite and advanced after acting on each page; acting again
-// on the same event changes nothing.
+// It asks only for the two events it acts on. node.purged for an environment deletes that
+// environment's tasks; a purged project's environments are purged with it, each with its
+// own event. user.deleted deletes that person's profile. Tasks are authored, so
+// member.removed keeps them. One cursor, the last event id acted on, is kept in SQLite
+// with the data it cleans up, and saved in the same transaction as a page's deletes. Acting
+// again on the same event changes nothing, so the log can be replayed by resetting it.
 package lifecycle
 
 import (
@@ -27,12 +26,16 @@ import (
 )
 
 const (
-	// Interval is the time between polls while the feeds are caught up.
-	Interval = 5 * time.Second
-	pageSize = 100
+	// Types are the events the API acts on, and the only ones it asks for.
+	Types = "node.purged,user.deleted"
+	// RetryAfter is the wait after a failed read before asking again.
+	RetryAfter = 5 * time.Second
+	// Identity waits up to 25 s before a 204, so a read may take that long.
+	requestTimeout = 40 * time.Second
+	pageSize       = 100
 )
 
-// Event is the part of an event the API reads, from either feed.
+// Event is the part of an event the API reads.
 type Event struct {
 	ID     string `json:"id"`
 	Type   string `json:"type"`
@@ -41,121 +44,125 @@ type Event struct {
 	UserID string `json:"user_id"`
 }
 
-// feed is one of identity's feeds: its name (its row in feed_cursors, and its logs'
-// feed), its url, the key its pages list events under, and what the API does with each.
-type feed struct {
-	name string
-	url  string
-	key  string
-	act  func(context.Context, Event) error
-}
-
 type Consumer struct {
-	tree     feed
-	user     feed
+	url      string
 	db       *sql.DB
 	tasks    *tasks.Store
 	profiles *profiles.Store
 	client   *http.Client
+	retry    time.Duration
 	logger   zerolog.Logger
 }
 
-// New reads the feeds at identityURL, identity's internal base URL.
+// New reads the log at identityURL, identity's internal base URL.
 func New(identityURL string, db *sql.DB, tasks *tasks.Store, profiles *profiles.Store, logger zerolog.Logger) *Consumer {
-	c := &Consumer{
+	return &Consumer{
+		url:      identityURL + "/internal/events",
 		db:       db,
 		tasks:    tasks,
 		profiles: profiles,
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   &http.Client{Timeout: requestTimeout},
+		retry:    RetryAfter,
 		logger:   logger.With().Str("component", "lifecycle").Logger(),
 	}
-	c.tree = feed{name: "tree", url: identityURL + "/internal/tree-events", key: "tree_events", act: c.actOnTree}
-	c.user = feed{name: "user", url: identityURL + "/internal/user-events", key: "user_events", act: c.actOnUser}
-	return c
 }
 
-// Run polls every Interval until ctx ends.
+// Run follows the log until ctx ends, which also cancels a read in flight. After a page or
+// a 204 it asks again at once; after an error it logs it and asks again after RetryAfter.
+// An immediate answer with no events (an empty log, or a cursor past identity's newest
+// event) is also asked again after RetryAfter, so it isn't asked in a tight loop.
 func (c *Consumer) Run(ctx context.Context) {
-	ticker := time.NewTicker(Interval)
-	defer ticker.Stop()
-	for {
-		c.Poll(ctx)
+	if cur, err := c.cursor(ctx); err == nil {
+		if cur == "" {
+			c.logger.Info().Msg("following the lifecycle log from its first event")
+		} else {
+			c.logger.Info().Str("after", cur).Msg("following the lifecycle log")
+		}
+	}
+	for ctx.Err() == nil {
+		again, err := c.Step(ctx)
+		if again || ctx.Err() != nil {
+			continue
+		}
+		if err != nil {
+			c.logger.Error().Err(err).Dur("retry_in", c.retry).Msg("lifecycle read failed")
+		}
 		select {
 		case <-ctx.Done():
-			return
-		case <-ticker.C:
+		case <-time.After(c.retry):
 		}
 	}
 }
 
-// Poll reads the tree feed to its end, then the user feed. A feed that fails is logged and
-// doesn't stop the other; it's read again on the next poll.
-func (c *Consumer) Poll(ctx context.Context) {
-	for _, f := range []feed{c.tree, c.user} {
-		if err := c.read(ctx, f); err != nil && ctx.Err() == nil {
-			c.logger.Error().Err(err).Str("feed", f.name).Msg("lifecycle poll failed")
-		}
+// Step asks once for the events after the saved cursor, acts on them, and saves the cursor
+// past them in the same transaction as their deletes. again is whether to ask again at
+// once: after a page of events, or a 204 (identity waited and nothing came).
+func (c *Consumer) Step(ctx context.Context) (again bool, err error) {
+	cursor, err := c.cursor(ctx)
+	if err != nil {
+		return false, err
 	}
+	events, waited, err := c.fetch(ctx, cursor)
+	if err != nil || len(events) == 0 {
+		return waited, err
+	}
+	if err := c.apply(ctx, events); err != nil {
+		return false, err
+	}
+	c.logger.Info().Int("events", len(events)).Str("after", cursor).
+		Str("cursor", events[len(events)-1].ID).Msg("lifecycle page read")
+	return true, nil
 }
 
-// read reads f from its cursor until it has no more, acting on each page and then
-// advancing the cursor past it.
-func (c *Consumer) read(ctx context.Context, f feed) error {
-	cursor, err := c.cursor(ctx, f.name)
+// apply acts on a page and saves its last id as the cursor in one transaction: the deletes
+// and the cursor commit together or not at all.
+func (c *Consumer) apply(ctx context.Context, events []Event) error {
+	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	for {
-		events, more, err := c.fetch(ctx, f, cursor)
-		if err != nil {
+	defer tx.Rollback()
+	ts, ps := c.tasks.WithTx(tx), c.profiles.WithTx(tx)
+	for _, e := range events {
+		if err := c.act(ctx, ts, ps, e); err != nil {
+			return fmt.Errorf("event %s: %w", e.ID, err)
+		}
+	}
+	start := time.Now()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO feed_cursors (id, event_id) VALUES (1, ?)
+		ON CONFLICT (id) DO UPDATE SET event_id = excluded.event_id`, events[len(events)-1].ID)
+	metrics.RecordDBOperation("feed_cursors.save", time.Since(start), err)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (c *Consumer) act(ctx context.Context, ts *tasks.Store, ps *profiles.Store, e Event) error {
+	switch {
+	case e.Type == "node.purged" && e.Kind == "environment":
+		if err := ts.DeleteByEnvironment(ctx, e.NodeID); err != nil {
 			return err
 		}
-		for _, e := range events {
-			if err := f.act(ctx, e); err != nil {
-				return fmt.Errorf("event %s: %w", e.ID, err)
-			}
+		c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged environment's tasks deleted")
+	case e.Type == "user.deleted":
+		if err := ps.Delete(ctx, e.UserID); err != nil {
+			return err
 		}
-		if len(events) > 0 {
-			cursor = events[len(events)-1].ID
-			if err := c.saveCursor(ctx, f.name, cursor); err != nil {
-				return err
-			}
-		}
-		if !more {
-			return nil
-		}
+		c.logger.Info().Str("event_id", e.ID).Str("user_id", e.UserID).Msg("profile deleted with its account")
 	}
-}
-
-func (c *Consumer) actOnTree(ctx context.Context, e Event) error {
-	if e.Type != "node.purged" || e.Kind != "environment" {
-		return nil
-	}
-	if err := c.tasks.DeleteByEnvironment(ctx, e.NodeID); err != nil {
-		return err
-	}
-	c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged environment's tasks deleted")
 	return nil
 }
 
-func (c *Consumer) actOnUser(ctx context.Context, e Event) error {
-	if e.Type != "user.deleted" {
-		return nil
-	}
-	if err := c.profiles.Delete(ctx, e.UserID); err != nil {
-		return err
-	}
-	c.logger.Info().Str("event_id", e.ID).Str("user_id", e.UserID).Msg("profile deleted with its account")
-	return nil
-}
-
-// fetch reads f's page after cursor: its events, and whether there are more.
-func (c *Consumer) fetch(ctx context.Context, f feed, cursor string) ([]Event, bool, error) {
-	q := url.Values{"limit": {fmt.Sprint(pageSize)}}
+// fetch asks for the events after cursor, or from the first event when there's none yet.
+// With a cursor identity waits for one; its 204 is no events, and waited.
+func (c *Consumer) fetch(ctx context.Context, cursor string) (events []Event, waited bool, err error) {
+	q := url.Values{"types": {Types}, "limit": {fmt.Sprint(pageSize)}}
 	if cursor != "" {
-		q.Set("starting_after", cursor)
+		q.Set("after", cursor)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -164,41 +171,33 @@ func (c *Consumer) fetch(ctx context.Context, f feed, cursor string) ([]Event, b
 		return nil, false, err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("%s feed answered %d", f.name, res.StatusCode)
+	switch res.StatusCode {
+	case http.StatusNoContent:
+		return nil, true, nil
+	case http.StatusOK:
+	default:
+		return nil, false, fmt.Errorf("lifecycle log answered %d", res.StatusCode)
 	}
-	var page map[string]json.RawMessage
+	var page struct {
+		Events *[]Event `json:"events"`
+	}
 	if err := json.NewDecoder(res.Body).Decode(&page); err != nil {
-		return nil, false, fmt.Errorf("%s feed: %w", f.name, err)
+		return nil, false, fmt.Errorf("lifecycle log: %w", err)
 	}
-	var events []Event
-	if err := json.Unmarshal(page[f.key], &events); err != nil {
-		return nil, false, fmt.Errorf("%s feed: %s: %w", f.name, f.key, err)
+	if page.Events == nil {
+		return nil, false, fmt.Errorf("lifecycle log: no events in its answer")
 	}
-	var more bool
-	if err := json.Unmarshal(page["has_more"], &more); err != nil {
-		return nil, false, fmt.Errorf("%s feed: has_more: %w", f.name, err)
-	}
-	return events, more, nil
+	return *page.Events, false, nil
 }
 
-// cursor is the last event id acted on in the feed, or "" before the first.
-func (c *Consumer) cursor(ctx context.Context, feed string) (string, error) {
+// cursor is the last event id acted on, or "" before the first.
+func (c *Consumer) cursor(ctx context.Context) (string, error) {
 	start := time.Now()
 	var id string
-	err := c.db.QueryRowContext(ctx, `SELECT event_id FROM feed_cursors WHERE feed = ?`, feed).Scan(&id)
+	err := c.db.QueryRowContext(ctx, `SELECT event_id FROM feed_cursors WHERE id = 1`).Scan(&id)
 	if err == sql.ErrNoRows {
 		err = nil
 	}
 	metrics.RecordDBOperation("feed_cursors.find", time.Since(start), err)
 	return id, err
-}
-
-func (c *Consumer) saveCursor(ctx context.Context, feed, eventID string) error {
-	start := time.Now()
-	_, err := c.db.ExecContext(ctx, `
-		INSERT INTO feed_cursors (feed, event_id) VALUES (?, ?)
-		ON CONFLICT (feed) DO UPDATE SET event_id = excluded.event_id`, feed, eventID)
-	metrics.RecordDBOperation("feed_cursors.save", time.Since(start), err)
-	return err
 }

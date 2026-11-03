@@ -20,7 +20,7 @@ services:
       OTEL_SERVICE_NAME: api
       OTEL_SERVICE_NAMESPACE: api
       DEPLOYMENT_ENV: docker
-      # Identity's internal port, for its tree and user feeds and the assignee check.
+      # Identity's internal port, for its lifecycle log and the assignee check.
       IDENTITY_INTERNAL_URL: http://identity:3001
       # The permission a task's assignee needs on its project: the one
       # services/api.yml requires to read an environment's tasks. A deployment

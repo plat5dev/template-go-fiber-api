@@ -85,16 +85,28 @@ It sends the request's `traceparent` and `X-Request-ID`. After the body (**422**
 
 ## Following the lifecycle
 
-The API reads identity's two feeds ([plat5 `docs/concepts/lifecycle.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#lifecycle-events)), in `lifecycle/`: tasks are tree data, keyed by an environment's id, and a profile is user-route data, keyed by a user id.
+The API follows identity's lifecycle log, `GET /internal/events` on `IDENTITY_INTERNAL_URL`, in `lifecycle/`. What the log guarantees and how a service follows it: [plat5 `docs/concepts/lifecycle.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#following-the-log); its params and answers: [`docs/reference/api/internal.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/api/internal.md#lifecycle-events).
 
-| Feed | On `IDENTITY_INTERNAL_URL` | Events in | The API |
-|------|----------------------------|-----------|---------|
-| Tree | `GET /internal/tree-events` | `tree_events` | On `node.purged` with `kind: environment`, deletes that environment's tasks. A purged project's environments are purged with it, each with its own event |
-| User | `GET /internal/user-events` | `user_events` | On `user.deleted`, deletes that person's profile |
+It asks only for the two events it acts on, `?types=node.purged,user.deleted`:
+
+| Event | The API |
+|-------|---------|
+| `node.purged` with `kind: environment` | Deletes that environment's tasks. A purged project's environments are purged with it, each with its own event |
+| `user.deleted` | Deletes that person's profile |
 
 Every other event needs nothing. Tasks are authored, so `member.removed` keeps them; there's no background work to stop on `node.deleted`; and a profile is made on the person's first call, not on `user.created`.
 
-Every 5 seconds it reads the tree feed to its end, then the user feed, each with `?starting_after=<cursor>&limit=100` and again at once while `has_more` is `true`. Each feed has its own cursor, the last event `id` acted on, kept in SQLite (`feed_cursors`, a row each for `tree` and `user`) and advanced after acting on each page. Deleting a purged environment's tasks or a deleted person's profile again changes nothing, so an event read twice is harmless. A failed read of one feed is logged, doesn't stop the other, and is tried on the next tick. With `IDENTITY_INTERNAL_URL` unset neither feed is read, and the API says so once at boot.
+One cursor, the last event `id` acted on, is kept in SQLite beside the data it cleans up (`feed_cursors`, one row). With no cursor it reads from the log's first event. It asks with `&after=<cursor>`, and identity waits for an event. A page's deletes and the new cursor commit in one transaction, then it asks again at once; after a **204** (nothing came) it asks again at once; after an error it logs it and asks again in 5 seconds. Deleting a purged environment's tasks or a deleted person's profile again changes nothing, so an event read twice is harmless. With `IDENTITY_INTERNAL_URL` unset the log isn't read, and the API says so once at boot.
+
+To replay the log, from its first event (after restoring the database, or fixing a handler), stop the API, delete the cursor, and start it:
+
+```bash
+docker compose stop api
+docker compose run --rm --no-deps api sqlite3 /data/app.db 'DELETE FROM feed_cursors'
+docker compose start api
+```
+
+It logs `following the lifecycle log from its first event`, then each page it reads. Against another database the SQL is the same: `DELETE FROM feed_cursors` in the file at `DATABASE_PATH`.
 
 ## Lists
 
@@ -149,7 +161,7 @@ plat5 start -x app
 TASK_ASSIGNEE_PERMISSION=project:read go run .
 ```
 
-`-x app` runs everything but the API, and points the gateway's `api` at your machine, so the API must listen on port 3000. Identity's internal port isn't published there, so in this mode the feeds aren't read and a task with an assignee is a **503**.
+`-x app` runs everything but the API, and points the gateway's `api` at your machine, so the API must listen on port 3000. Identity's internal port isn't published there, so in this mode the lifecycle log isn't read and a task with an assignee is a **503**.
 
 `plat5 stop` stops it all; data is kept.
 
@@ -202,7 +214,7 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `PORT` | `3000` | Public |
 | `INTERNAL_PORT` | `3001` | Health + `/metrics` |
 | `DATABASE_PATH` | `./data/app.db` | SQLite file |
-| `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for its feeds and the assignee check. The compose file sets `http://identity:3001`. Unset → the feeds aren't read, and a task with an assignee is a **503** |
+| `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for its lifecycle log and the assignee check. The compose file sets `http://identity:3001`. Unset → the log isn't read, and a task with an assignee is a **503** |
 | `TASK_ASSIGNEE_PERMISSION` | required | The permission an assignee needs on the task's project ([Checking an assignee](#checking-an-assignee)). The compose file sets `project:read`. Unset or empty → the API exits at boot |
 | `OTEL_SERVICE_NAME` | `api` | Resource `service.name` |
 | `OTEL_SERVICE_NAMESPACE` | `api` | Resource `service.namespace` |
@@ -243,13 +255,13 @@ Health and `/metrics` are on the internal app (not OTel-instrumented).
 ## Layout
 
 ```
-main.go              # dual listen: public + internal; starts the feeds' reader
+main.go              # dual listen: public + internal; starts the lifecycle reader
 db/                  # SQLite open + schema
 errors/              # Plat5 error envelope
 jsonbody/            # a JSON request body, keys matched exactly, or a 422
 audit/               # X-Plat5-Audit-Details / -Created
 pagination/          # limit, starting_after, has_more
-lifecycle/           # identity's tree and user feeds: purged environments, deleted accounts
+lifecycle/           # identity's lifecycle log: purged environments, deleted accounts
 access/              # identity's access evaluation: assignees
 metrics/             # Prometheus SoT
 middleware/          # request logger
