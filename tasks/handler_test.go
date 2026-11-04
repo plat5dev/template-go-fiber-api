@@ -329,6 +329,7 @@ func TestNoAnswerIsUnavailable(t *testing.T) {
 		status int
 		body   string
 	}{
+		{http.StatusServiceUnavailable, `{"error":{"code":"SERVICE_UNAVAILABLE"}}`},
 		{http.StatusInternalServerError, `{"error":{}}`},
 		{http.StatusOK, `{}`},
 	} {

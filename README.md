@@ -77,7 +77,7 @@ It sends the request's `traceparent` and `X-Request-ID`. After the body (**422**
 |------------------|---------|
 | `200 {"decision": true}` | Writes |
 | `200 {"decision": false}` | **422** `VALIDATION_ERROR`, `That person can't see this project.`, at `assignee_id`. Nothing written |
-| Anything else, or `IDENTITY_INTERNAL_URL` unset | **503** `SERVICE_UNAVAILABLE`, logged with the request id. Nothing written: no answer is no |
+| **503** (its Postgres is unavailable), any other status, a body without a boolean `decision`, no answer, or `IDENTITY_INTERNAL_URL` unset | **503** `SERVICE_UNAVAILABLE`, logged with the request id. Nothing written: no answer is no, and the caller retries later |
 
 `null` unassigns and an absent `assignee_id` leaves the task's as it is; neither asks. Anything but a lowercase ULID or `null` is **422** at `assignee_id`.
 
@@ -96,7 +96,7 @@ It asks only for the two events it acts on, `?types=node.purged,user.deleted`:
 
 Every other event needs nothing. Tasks are authored, so `member.removed` keeps them; there's no background work to stop on `node.deleted`; and a profile is made on the person's first call, not on `user.created`.
 
-One cursor, the last event `id` acted on, is kept in SQLite beside the data it cleans up (`feed_cursors`, one row). With no cursor it reads from the log's first event. It asks with `&after=<cursor>`, and identity waits for an event. A page's deletes and the new cursor commit in one transaction, then it asks again at once; after a **204** (nothing came) it asks again at once; after an error it logs it and asks again in 5 seconds. Deleting a purged environment's tasks or a deleted person's profile again changes nothing, so an event read twice is harmless. With `IDENTITY_INTERNAL_URL` unset the log isn't read, and the API says so once at boot.
+One cursor, the last event `id` acted on, is kept in SQLite beside the data it cleans up (`feed_cursors`, one row). With no cursor it reads from the log's first event. It asks with `&after=<cursor>`, and identity waits for an event. A page's deletes and the new cursor commit in one transaction, then it asks again at once; after a **204** (nothing came) it asks again at once; after an error (a **503** while identity's Postgres is unavailable, any other status, or no answer) it logs it and asks again in 5 seconds, from the same cursor. Deleting a purged environment's tasks or a deleted person's profile again changes nothing, so an event read twice is harmless. With `IDENTITY_INTERNAL_URL` unset the log isn't read, and the API says so once at boot.
 
 To replay the log, from its first event (after restoring the database, or fixing a handler), stop the API, delete the cursor, and start it:
 

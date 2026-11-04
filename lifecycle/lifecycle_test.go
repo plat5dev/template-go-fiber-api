@@ -31,12 +31,13 @@ const (
 
 // identity serves the one lifecycle log at /internal/events as identity does: types
 // filters, two events to a page, no after is answered at once, and with after it waits for
-// a matching event up to wait, then answers 204. The first fail requests answer 500.
+// a matching event up to wait, then answers 204. The first requests answer fail's
+// statuses, one each.
 type identity struct {
 	mu      sync.Mutex
 	events  []Event
 	wait    time.Duration
-	fail    int
+	fail    []int    // statuses for the first requests
 	asked   []string // each request's after
 	types   []string // each request's types
 	waiting chan struct{}
@@ -79,10 +80,11 @@ func (id *identity) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id.mu.Lock()
 	id.asked = append(id.asked, after)
 	id.types = append(id.types, q.Get("types"))
-	if id.fail > 0 {
-		id.fail--
+	if len(id.fail) > 0 {
+		status := id.fail[0]
+		id.fail = id.fail[1:]
 		id.mu.Unlock()
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(status)
 		return
 	}
 	events, more := id.page(after, types)
@@ -324,18 +326,19 @@ func TestAWaitingReadGetsANewEvent(t *testing.T) {
 
 func TestAnErrorIsRetried(t *testing.T) {
 	id := theLog()
-	id.fail = 2
+	// Identity's Postgres unavailable is a 503; any other failure, a 500.
+	id.fail = []int{http.StatusServiceUnavailable, http.StatusInternalServerError}
 	c := setup(t, id)
 	seed(t, c)
 
 	if _, err := c.Step(context.Background()); err == nil {
-		t.Fatal("want an error from a 500")
+		t.Fatal("want an error from a 503")
 	}
 	if cur := cursor(t, c); cur != "" {
 		t.Fatalf("cursor after a failed read = %q", cur)
 	}
 
-	// Run logs the next 500, waits c.retry, and reads on.
+	// Run logs the 500, waits c.retry, and reads on.
 	run(t, c, func() bool { return cursor(t, c) == "13" })
 	checkActed(t, c)
 	if got := id.askedAfter(); !slices.Equal(got[:4], []string{"", "", "", "12"}) {

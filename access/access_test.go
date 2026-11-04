@@ -87,7 +87,9 @@ func TestNoAnswerIsAnError(t *testing.T) {
 		status int
 		body   string
 	}{
+		{"unavailable", http.StatusServiceUnavailable, `{"error":{"code":"SERVICE_UNAVAILABLE"}}`},
 		{"not 200", http.StatusInternalServerError, `{"decision":true}`},
+		{"bad request", http.StatusBadRequest, `{"error":{"code":"INVALID_REQUEST"}}`},
 		{"no decision", http.StatusOK, `{}`},
 		{"decision not a boolean", http.StatusOK, `{"decision":"true"}`},
 		{"not JSON", http.StatusOK, `yes`},
