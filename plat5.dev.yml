@@ -23,7 +23,7 @@ app:
 # ports:                 # host ports (defaults: gateway 5400, auth 5401, control_plane 5402,
 #   gateway: 5400        #   grafana 5403, otlp_grpc 4317, otlp_http 4318)
 # admin_token: dev-admin-token
-# apikey_brand: plat5    # keys are {brand}-k-2-…
+# secret_brand: plat5    # API keys {brand}-k-2-…, invite tokens {brand}-i-1-…
 # auth:                  # local Auth, beyond app.web
 #   clients: [plat5]
 #   origins: []
