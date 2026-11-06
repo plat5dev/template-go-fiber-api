@@ -227,9 +227,13 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | unset | Optional full metrics URL |
 | `OTEL_TRACES_EXPORTER` | `otlp` when endpoint set | Include `otlp` to push traces |
 | `OTEL_METRICS_EXPORTER` | `otlp` when endpoint set | Set `prometheus` to push-off; `/metrics` always on |
-| `OTEL_METRIC_EXPORT_INTERVAL` | SDK default | ms (OTLP metrics only) |
-| `OTEL_TRACES_SAMPLER_RATIO` | `1` | Trace sampling ratio |
-| `OTEL_SDK_DISABLED` | unset | `true` → no OTLP; stdout + `/metrics` remain |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` (and `_TRACES_`, `_METRICS_`) | `http/protobuf` | The only one supported |
+| `OTEL_EXPORTER_OTLP_HEADERS` | unset | Headers on every export (e.g. a collector's auth) |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | ms (OTLP metrics only) |
+| `OTEL_TRACES_SAMPLER_RATIO` | `1` | Trace sampling ratio, `0` to `1`; parent-based |
+| `OTEL_SDK_DISABLED` | `false` | `true` → no OTLP; stdout + `/metrics` remain |
+
+A telemetry variable that is set but invalid (an exporter other than those above, a protocol other than `http/protobuf`, an endpoint that isn't an `http://` or `https://` URL, a ratio outside `0`–`1`, an interval that isn't a positive number, `OTEL_SDK_DISABLED` other than `true` or `false`, an `OTEL_RESOURCE_ATTRIBUTES` entry without `=`) stops the API at boot, naming it.
 
 ## Telemetry
 
@@ -239,16 +243,20 @@ Contract: Plat5 [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat
 |--------|------|
 | Logs | JSON stdout (zerolog); access line per request, with `request_id`, and `node_id` and `member_id` on task routes or `user_id` on the profile |
 | Metrics scrape | Prometheus `/metrics` on `INTERNAL_PORT` |
-| Traces | OTLP HTTP when endpoint set (default); the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
+| Traces | OTLP HTTP when endpoint set (default); W3C Trace Context only, `traceparent` in and on to identity; the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
 | Metrics OTLP | On when endpoint set (default); set `OTEL_METRICS_EXPORTER=prometheus` to opt out |
 
 ```bash
-# traces push + scrape metrics (no double count)
+# traces and metrics pushed: don't also scrape /metrics into the same backend
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 
-# full OTLP push — do not also scrape /metrics into the same backend
-# OTEL_METRICS_EXPORTER=prometheus  # opt out of metrics push
+# traces pushed, metrics scraped (no double count)
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_METRICS_EXPORTER=prometheus
 ```
+
+Under `plat5 start`, the compose file gets `OTEL_EXPORTER_OTLP_ENDPOINT` from the CLI when the observability module is on. Running on your own machine, set it yourself. Without it there's no OTLP: stdout logs and `/metrics` only, and the request's `traceparent` still goes on to identity.
+
+An export that fails, the collector unreachable say, is an `error` line, `telemetry error` with the cause in `error_message`, each time it fails; the API keeps serving.
 
 Health and `/metrics` are on the internal app (not OTel-instrumented).
 

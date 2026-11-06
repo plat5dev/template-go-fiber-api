@@ -142,13 +142,15 @@ func main() {
 		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's lifecycle log, so a purged environment's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
 	}
 
+	// No startup banner on either app: every line on stdout is JSON (plat5
+	// docs/reference/telemetry.md#logs).
 	go func() {
-		if err := internalApp.Listen(":"+internalPort, fiber.ListenConfig{GracefulContext: ctx}); err != nil {
+		if err := internalApp.Listen(":"+internalPort, fiber.ListenConfig{GracefulContext: ctx, DisableStartupMessage: true}); err != nil {
 			baseLogger.Fatal().Err(err).Msg("internal server exited")
 		}
 	}()
 
-	if err := app.Listen(":"+port, fiber.ListenConfig{GracefulContext: ctx}); err != nil {
+	if err := app.Listen(":"+port, fiber.ListenConfig{GracefulContext: ctx, DisableStartupMessage: true}); err != nil {
 		baseLogger.Fatal().Err(err).Msg("fiber server exited")
 	}
 	// Wait for the reader, so its last transaction ends before the database closes.
