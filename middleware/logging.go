@@ -72,7 +72,7 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 			if apiErr, ok := err.(*errors.ApiError); ok && apiErr.Kind != "" {
 				kind = apiErr.Kind.String()
 			}
-			span.SetAttributes(attribute.String("error.kind", kind))
+			span.SetAttributes(attribute.String("error.type", kind))
 			span.SetStatus(codes.Error, "")
 		}
 
@@ -85,12 +85,12 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 					kind = errors.KindInternal.String()
 				}
 				logger.Error().
-					Str("error_kind", kind).
+					Str("error_type", kind).
 					Str("error_message", err.Error()).
 					Msg("request completed")
 			} else if status >= 500 {
 				logger.Error().
-					Str("error_kind", errors.KindInternal.String()).
+					Str("error_type", errors.KindInternal.String()).
 					Str("error_message", err.Error()).
 					Msg("request completed")
 			} else {
@@ -101,7 +101,7 @@ func RequestLogger(telem *telemetry.Telemetry) fiber.Handler {
 
 		if status >= 500 {
 			logger.Error().
-				Str("error_kind", errors.KindInternal.String()).
+				Str("error_type", errors.KindInternal.String()).
 				Str("error_message", "request failed").
 				Msg("request completed")
 			return nil

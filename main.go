@@ -81,7 +81,7 @@ func main() {
 
 	app.Use(recover.New())
 	app.Use(otel.Middleware(
-		otel.WithTracerProvider(telem.TracerProvider()),
+		otel.WithTracerProvider(middleware.HTTPServerTracerProvider(telem.TracerProvider())),
 		otel.WithPropagators(telem.Propagator()),
 		otel.WithoutMetrics(true),
 		otel.WithSpanNameFormatter(middleware.HTTPSpanName),
