@@ -1,8 +1,8 @@
 // Package lifecycle follows identity's lifecycle log, so the API's data goes when its
-// environment or its person does (plat5 docs/concepts/lifecycle.md#following-the-log).
+// project or its person does (plat5 docs/concepts/lifecycle.md#following-the-log).
 //
-// It asks only for the two events it acts on. node.purged for an environment deletes that
-// environment's tasks; a purged project's environments are purged with it, each with its
+// It asks only for the two events it acts on. node.purged for a project deletes that
+// project's tasks; a purged organization's projects are purged with it, each with its
 // own event. user.deleted deletes that person's profile. Tasks are authored, so
 // member.removed keeps them. One cursor, the last event id acted on, is kept in SQLite
 // with the data it cleans up, and saved in the same transaction as a page's deletes. Acting
@@ -141,11 +141,11 @@ func (c *Consumer) apply(ctx context.Context, events []Event) error {
 
 func (c *Consumer) act(ctx context.Context, ts *tasks.Store, ps *profiles.Store, e Event) error {
 	switch {
-	case e.Type == "node.purged" && e.Kind == "environment":
-		if err := ts.DeleteByEnvironment(ctx, e.NodeID); err != nil {
+	case e.Type == "node.purged" && e.Kind == "project":
+		if err := ts.DeleteByProject(ctx, e.NodeID); err != nil {
 			return err
 		}
-		c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged environment's tasks deleted")
+		c.logger.Info().Str("event_id", e.ID).Str("node_id", e.NodeID).Msg("purged project's tasks deleted")
 	case e.Type == "user.deleted":
 		if err := ps.Delete(ctx, e.UserID); err != nil {
 			return err

@@ -23,7 +23,7 @@ services:
       # Identity's internal port, for its lifecycle log and the assignee check.
       IDENTITY_INTERNAL_URL: http://identity:3001
       # The permission a task's assignee needs on its project: the one
-      # services/api.yml requires to read an environment's tasks. A deployment
+      # services/api.yml requires to read a project's tasks. A deployment
       # that renames it sets this too; otherwise the check fails closed and
       # refuses every assignee.
       TASK_ASSIGNEE_PERMISSION: ${TASK_ASSIGNEE_PERMISSION:-project:read}

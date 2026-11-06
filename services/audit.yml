@@ -24,12 +24,6 @@ audit:
         - path: /audit-events
           methods:
             GET: { required_permissions: [audit:read] }
-    environment:
-      upstream_prefix: /nodes/{environment.id}
-      routes:
-        - path: /audit-events
-          methods:
-            GET: { required_permissions: [audit:read] }
     user:
       routes:
         - path: /user/audit-events

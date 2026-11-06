@@ -18,12 +18,9 @@ import (
 )
 
 const (
-	// MemberHeader is the caller's member id in the environment's tree, from the front
-	// door. A create records it as the task's author, and answers 400 without it.
+	// MemberHeader is the caller's member id in the project's tree, from the front door.
+	// A create records it as the task's author, and answers 400 without it.
 	MemberHeader = "X-Plat5-Member-Id"
-	// ProjectHeader is the environment's project id, from the front door. A write that sets
-	// an assignee checks them on it, and answers 400 without it.
-	ProjectHeader = "X-Plat5-Project-Id"
 )
 
 type Handler struct {
@@ -34,7 +31,7 @@ type Handler struct {
 }
 
 // NewHandler checks each assignee with access: they must hold assigneePermission on the
-// environment's project.
+// project.
 func NewHandler(store *Store, telem *telemetry.Telemetry, access *access.Client, assigneePermission string) *Handler {
 	return &Handler{store: store, telem: telem, access: access, assigneePermission: assigneePermission}
 }
@@ -77,15 +74,12 @@ func parseAssignee(raw json.RawMessage) (set bool, id *string, err error) {
 }
 
 // checkAssignee asks identity whether the assignee holds the assignee permission on the
-// environment's project. The caller may assign, but the assignee isn't the caller, so the
+// project in the path. The caller may assign, but the assignee isn't the caller, so the
 // front door decided nothing about them
 // (plat5 docs/guides/write-a-service.md#checking-access-outside-a-request). No answer is
 // no: a 503, so nothing is written.
 func (h *Handler) checkAssignee(c fiber.Ctx, assigneeID string) error {
-	projectID := c.Get(ProjectHeader)
-	if projectID == "" {
-		return errors.InvalidRequestError()
-	}
+	projectID := c.Params("project_id")
 	allowed, err := h.access.Evaluate(c.Context(), c.Get("X-Request-ID"), assigneeID, "project", projectID, h.assigneePermission)
 	if err != nil {
 		return errors.ServiceUnavailableError()
@@ -96,18 +90,18 @@ func (h *Handler) checkAssignee(c fiber.Ctx, assigneeID string) error {
 	return nil
 }
 
-// Every handler scopes its lookups by the environment id in the path, and checks nothing
-// about the caller or the environment: the front door decided who may call, on which
-// environment. A write that sets an assignee checks the assignee, in this order: the body,
-// the task (on an update), the project header, then identity's answer, before writing.
+// Every handler scopes its lookups by the project id in the path, and checks nothing
+// about the caller or the project: the front door decided who may call, on which
+// project. A write that sets an assignee checks the assignee, in this order: the body,
+// the task (on an update), then identity's answer, before writing.
 
 func (h *Handler) List(c fiber.Ctx) error {
-	environmentID := c.Params("environment_id")
+	projectID := c.Params("project_id")
 	page, err := pagination.Parse(c)
 	if err != nil {
 		return err
 	}
-	list, more, err := h.store.ListByEnvironment(c.Context(), environmentID, page)
+	list, more, err := h.store.ListByProject(c.Context(), projectID, page)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -115,7 +109,7 @@ func (h *Handler) List(c fiber.Ctx) error {
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
-	environmentID := c.Params("environment_id")
+	projectID := c.Params("project_id")
 	memberID := c.Get(MemberHeader)
 	if memberID == "" {
 		return errors.InvalidRequestError()
@@ -149,14 +143,14 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	t := &Task{
-		ID:            strings.ToLower(ulid.Make().String()),
-		EnvironmentID: environmentID,
-		Title:         title,
-		Status:        status,
-		AssigneeID:    assigneeID,
-		CreatedBy:     memberID,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:         strings.ToLower(ulid.Make().String()),
+		ProjectID:  projectID,
+		Title:      title,
+		Status:     status,
+		AssigneeID: assigneeID,
+		CreatedBy:  memberID,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := h.store.Insert(c.Context(), t); err != nil {
 		return errors.InternalError()
@@ -167,9 +161,9 @@ func (h *Handler) Create(c fiber.Ctx) error {
 }
 
 func (h *Handler) Get(c fiber.Ctx) error {
-	environmentID := c.Params("environment_id")
+	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
-	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
+	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -180,7 +174,7 @@ func (h *Handler) Get(c fiber.Ctx) error {
 }
 
 func (h *Handler) Update(c fiber.Ctx) error {
-	environmentID := c.Params("environment_id")
+	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
 	var body updateBody
 	if err := jsonbody.Read(c, &body); err != nil {
@@ -203,7 +197,7 @@ func (h *Handler) Update(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
+	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
@@ -244,16 +238,16 @@ func (h *Handler) Update(c fiber.Ctx) error {
 }
 
 func (h *Handler) Delete(c fiber.Ctx) error {
-	environmentID := c.Params("environment_id")
+	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
-	t, err := h.store.FindInEnvironment(c.Context(), environmentID, taskID)
+	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}
 	if t == nil {
 		return errors.NotFoundError("task", taskID)
 	}
-	deleted, err := h.store.Delete(c.Context(), environmentID, taskID)
+	deleted, err := h.store.Delete(c.Context(), projectID, taskID)
 	if err != nil {
 		return errors.InternalError()
 	}

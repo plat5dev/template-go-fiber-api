@@ -23,11 +23,10 @@ import (
 )
 
 const (
-	environment = "01jd8x3k7q0000000000000000"
-	other       = "01jd8x3k7q0000000000000001"
-	project     = "01jd8x3k7q00000000000000pp"
-	member      = "01jd8x3k7q00000000000000mm"
-	assignee    = "01jd8x3k7q00000000000000aa"
+	project  = "01jd8x3k7q0000000000000000"
+	other    = "01jd8x3k7q0000000000000001"
+	member   = "01jd8x3k7q00000000000000mm"
+	assignee = "01jd8x3k7q00000000000000aa"
 	// permission isn't the starter's, to show the check asks for the configured one.
 	permission = "tasks:assignable"
 )
@@ -66,7 +65,7 @@ func (f *identity) calls() []string {
 	return slices.Clone(f.asked)
 }
 
-// evaluation is what identity should be asked for an assignee on the project.
+// evaluation is what identity should be asked for an assignee on the project in the path.
 func evaluation(assigneeID string) string {
 	return `{"subject":{"type":"member","id":"` + assigneeID + `"},"resource":{"type":"project","id":"` + project + `"},"action":{"name":"` + permission + `"}}`
 }
@@ -88,7 +87,7 @@ func newApp(t *testing.T) (*fiber.App, *identity) {
 	t.Cleanup(srv.Close)
 	h := NewHandler(NewStore(sqlDB), nil, access.New(srv.URL, propagation.TraceContext{}, zerolog.Nop()), permission)
 	app := fiber.New(fiber.Config{ErrorHandler: errors.FiberErrorHandler})
-	r := app.Group("/environments/:environment_id/tasks")
+	r := app.Group("/projects/:project_id/tasks")
 	r.Get("/", h.List)
 	r.Post("/", h.Create)
 	r.Get("/:task_id", h.Get)
@@ -97,8 +96,7 @@ func newApp(t *testing.T) (*fiber.App, *identity) {
 	return app, id
 }
 
-// do sends what the gateway sends on an environment route: the caller's member id and the
-// environment's project id.
+// do sends what the gateway sends on a project route: the caller's member id.
 func do(t *testing.T, app *fiber.App, method, path, body string) *http.Response {
 	t.Helper()
 	return doWithout(t, app, "", method, path, body)
@@ -110,7 +108,6 @@ func doWithout(t *testing.T, app *fiber.App, header, method, path, body string) 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(MemberHeader, member)
-	req.Header.Set(ProjectHeader, project)
 	req.Header.Del(header)
 	res, err := app.Test(req)
 	if err != nil {
@@ -150,9 +147,9 @@ func decodeTask(t *testing.T, res *http.Response) Task {
 	return task
 }
 
-func create(t *testing.T, app *fiber.App, environmentID, title string) Task {
+func create(t *testing.T, app *fiber.App, projectID, title string) Task {
 	t.Helper()
-	res := do(t, app, "POST", "/environments/"+environmentID+"/tasks", `{"title":"`+title+`"}`)
+	res := do(t, app, "POST", "/projects/"+projectID+"/tasks", `{"title":"`+title+`"}`)
 	if res.StatusCode != fiber.StatusCreated {
 		t.Fatalf("create: status %d", res.StatusCode)
 	}
@@ -166,7 +163,7 @@ type listBody struct {
 
 func list(t *testing.T, app *fiber.App, query string) listBody {
 	t.Helper()
-	res := do(t, app, "GET", "/environments/"+environment+"/tasks"+query, "")
+	res := do(t, app, "GET", "/projects/"+project+"/tasks"+query, "")
 	if res.StatusCode != 200 {
 		t.Fatalf("list%s: status %d", query, res.StatusCode)
 	}
@@ -179,8 +176,8 @@ func list(t *testing.T, app *fiber.App, query string) listBody {
 
 func TestCreate(t *testing.T) {
 	app, _ := newApp(t)
-	task := create(t, app, environment, "Launch")
-	if task.EnvironmentID != environment || task.CreatedBy != member || task.Status != "todo" || task.AssigneeID != nil {
+	task := create(t, app, project, "Launch")
+	if task.ProjectID != project || task.CreatedBy != member || task.Status != "todo" || task.AssigneeID != nil {
 		t.Fatalf("task = %+v", task)
 	}
 	if len(task.ID) != 26 || task.ID != strings.ToLower(task.ID) {
@@ -190,19 +187,19 @@ func TestCreate(t *testing.T) {
 
 func TestCreateNeedsMember(t *testing.T) {
 	app, _ := newApp(t)
-	res := doWithout(t, app, MemberHeader, "POST", "/environments/"+environment+"/tasks", `{"title":"Launch"}`)
+	res := doWithout(t, app, MemberHeader, "POST", "/projects/"+project+"/tasks", `{"title":"Launch"}`)
 	if body := decodeError(t, res); res.StatusCode != fiber.StatusBadRequest || body.Error.Code != "INVALID_REQUEST" {
 		t.Fatalf("status %d, code %q", res.StatusCode, body.Error.Code)
 	}
 }
 
-func TestScopedByEnvironment(t *testing.T) {
+func TestScopedByProject(t *testing.T) {
 	app, _ := newApp(t)
 	task := create(t, app, other, "Elsewhere")
 	for _, method := range []string{"GET", "PATCH", "DELETE"} {
-		res := do(t, app, method, "/environments/"+environment+"/tasks/"+task.ID, `{"title":"x"}`)
+		res := do(t, app, method, "/projects/"+project+"/tasks/"+task.ID, `{"title":"x"}`)
 		if res.StatusCode != fiber.StatusNotFound {
-			t.Fatalf("%s from another environment: status %d", method, res.StatusCode)
+			t.Fatalf("%s from another project: status %d", method, res.StatusCode)
 		}
 	}
 	if all := list(t, app, ""); len(all.Tasks) != 0 {
@@ -214,7 +211,7 @@ func TestListPages(t *testing.T) {
 	app, _ := newApp(t)
 	var ids []string
 	for _, title := range []string{"a", "b", "c"} {
-		ids = append(ids, create(t, app, environment, title).ID)
+		ids = append(ids, create(t, app, project, title).ID)
 	}
 
 	first := list(t, app, "?limit=2")
@@ -233,7 +230,7 @@ func TestListPages(t *testing.T) {
 func TestAuditDetails(t *testing.T) {
 	app, _ := newApp(t)
 
-	res := do(t, app, "POST", "/environments/"+environment+"/tasks", `{"title":"Launch"}`)
+	res := do(t, app, "POST", "/projects/"+project+"/tasks", `{"title":"Launch"}`)
 	task := decodeTask(t, res)
 	if got := res.Header.Get(audit.CreatedHeader); got != task.ID {
 		t.Fatalf("created = %q, want %q", got, task.ID)
@@ -242,7 +239,7 @@ func TestAuditDetails(t *testing.T) {
 		t.Fatalf("create details = %s, want %s", got, want)
 	}
 
-	path := "/environments/" + environment + "/tasks/" + task.ID
+	path := "/projects/" + project + "/tasks/" + task.ID
 	res = do(t, app, "PATCH", path, `{"status":"done"}`)
 	if got, want := res.Header.Get(audit.DetailsHeader), `{"status":{"from":"todo","to":"done"}}`; got != want {
 		t.Fatalf("update details = %s, want %s", got, want)
@@ -266,7 +263,7 @@ func TestAuditDetails(t *testing.T) {
 
 func get(t *testing.T, app *fiber.App, taskID string) Task {
 	t.Helper()
-	res := do(t, app, "GET", "/environments/"+environment+"/tasks/"+taskID, "")
+	res := do(t, app, "GET", "/projects/"+project+"/tasks/"+taskID, "")
 	if res.StatusCode != 200 {
 		t.Fatalf("get: status %d", res.StatusCode)
 	}
@@ -282,7 +279,7 @@ func assigned(task Task) string {
 
 func TestCreateWithAssignee(t *testing.T) {
 	app, id := newApp(t)
-	res := do(t, app, "POST", "/environments/"+environment+"/tasks", `{"title":"Launch","assignee_id":"`+assignee+`"}`)
+	res := do(t, app, "POST", "/projects/"+project+"/tasks", `{"title":"Launch","assignee_id":"`+assignee+`"}`)
 	if res.StatusCode != fiber.StatusCreated {
 		t.Fatalf("status %d", res.StatusCode)
 	}
@@ -290,7 +287,7 @@ func TestCreateWithAssignee(t *testing.T) {
 	if assigned(task) != assignee || assigned(get(t, app, task.ID)) != assignee {
 		t.Fatalf("assignee_id = %s", assigned(task))
 	}
-	// The assignee, on the project from the header, for the configured permission.
+	// The assignee, on the project in the path, for the configured permission.
 	if got := id.calls(); !slices.Equal(got, []string{evaluation(assignee)}) {
 		t.Fatalf("identity asked %q", got)
 	}
@@ -298,12 +295,12 @@ func TestCreateWithAssignee(t *testing.T) {
 
 func TestRefusedAssignee(t *testing.T) {
 	app, id := newApp(t)
-	task := create(t, app, environment, "Launch")
+	task := create(t, app, project, "Launch")
 	id.answer(http.StatusOK, `{"decision":false}`)
 
 	for _, tc := range []struct{ method, path string }{
-		{"POST", "/environments/" + environment + "/tasks"},
-		{"PATCH", "/environments/" + environment + "/tasks/" + task.ID},
+		{"POST", "/projects/" + project + "/tasks"},
+		{"PATCH", "/projects/" + project + "/tasks/" + task.ID},
 	} {
 		res := do(t, app, tc.method, tc.path, `{"title":"Other","assignee_id":"`+assignee+`"}`)
 		body := decodeError(t, res)
@@ -334,12 +331,12 @@ func TestNoAnswerIsUnavailable(t *testing.T) {
 		{http.StatusOK, `{}`},
 	} {
 		app, id := newApp(t)
-		task := create(t, app, environment, "Launch")
+		task := create(t, app, project, "Launch")
 		id.answer(tc.status, tc.body)
 
 		for _, r := range []struct{ method, path string }{
-			{"POST", "/environments/" + environment + "/tasks"},
-			{"PATCH", "/environments/" + environment + "/tasks/" + task.ID},
+			{"POST", "/projects/" + project + "/tasks"},
+			{"PATCH", "/projects/" + project + "/tasks/" + task.ID},
 		} {
 			res := do(t, app, r.method, r.path, `{"title":"Other","assignee_id":"`+assignee+`"}`)
 			if body := decodeError(t, res); res.StatusCode != fiber.StatusServiceUnavailable || body.Error.Code != "SERVICE_UNAVAILABLE" {
@@ -354,8 +351,8 @@ func TestNoAnswerIsUnavailable(t *testing.T) {
 
 func TestUpdateAssignee(t *testing.T) {
 	app, id := newApp(t)
-	task := create(t, app, environment, "Launch")
-	path := "/environments/" + environment + "/tasks/" + task.ID
+	task := create(t, app, project, "Launch")
+	path := "/projects/" + project + "/tasks/" + task.ID
 
 	res := do(t, app, "PATCH", path, `{"assignee_id":"`+assignee+`"}`)
 	if res.StatusCode != 200 || assigned(decodeTask(t, res)) != assignee {
@@ -381,17 +378,16 @@ func TestUpdateAssignee(t *testing.T) {
 
 func TestNoAssigneeNoCheck(t *testing.T) {
 	app, id := newApp(t)
-	base := "/environments/" + environment + "/tasks"
-	// Without an assignee, the project header isn't needed either.
+	base := "/projects/" + project + "/tasks"
 	for _, body := range []string{`{"title":"a"}`, `{"title":"b","assignee_id":null}`} {
-		res := doWithout(t, app, ProjectHeader, "POST", base, body)
+		res := do(t, app, "POST", base, body)
 		if res.StatusCode != fiber.StatusCreated || decodeTask(t, res).AssigneeID != nil {
 			t.Fatalf("create %s: status %d", body, res.StatusCode)
 		}
 	}
 	task := list(t, app, "").Tasks[0]
 	for _, body := range []string{`{"status":"done"}`, `{"assignee_id":null}`} {
-		if res := doWithout(t, app, ProjectHeader, "PATCH", base+"/"+task.ID, body); res.StatusCode != 200 {
+		if res := do(t, app, "PATCH", base+"/"+task.ID, body); res.StatusCode != 200 {
 			t.Fatalf("update %s: status %d", body, res.StatusCode)
 		}
 	}
@@ -400,33 +396,13 @@ func TestNoAssigneeNoCheck(t *testing.T) {
 	}
 }
 
-func TestAssigneeNeedsProject(t *testing.T) {
-	app, id := newApp(t)
-	task := create(t, app, environment, "Launch")
-	for _, r := range []struct{ method, path string }{
-		{"POST", "/environments/" + environment + "/tasks"},
-		{"PATCH", "/environments/" + environment + "/tasks/" + task.ID},
-	} {
-		res := doWithout(t, app, ProjectHeader, r.method, r.path, `{"title":"Other","assignee_id":"`+assignee+`"}`)
-		if body := decodeError(t, res); res.StatusCode != fiber.StatusBadRequest || body.Error.Code != "INVALID_REQUEST" {
-			t.Fatalf("%s: status %d, code %q", r.method, res.StatusCode, body.Error.Code)
-		}
-	}
-	if all := list(t, app, ""); len(all.Tasks) != 1 || all.Tasks[0].Title != "Launch" {
-		t.Fatalf("tasks = %+v", all.Tasks)
-	}
-	if got := id.calls(); len(got) != 0 {
-		t.Fatalf("identity asked %q", got)
-	}
-}
-
 func TestBadAssignee(t *testing.T) {
 	app, id := newApp(t)
-	task := create(t, app, environment, "Launch")
+	task := create(t, app, project, "Launch")
 	for _, value := range []string{`""`, `"someone"`, `"01JD8X3K7Q00000000000000AA"`, `5`, `{}`} {
 		for _, r := range []struct{ method, path string }{
-			{"POST", "/environments/" + environment + "/tasks"},
-			{"PATCH", "/environments/" + environment + "/tasks/" + task.ID},
+			{"POST", "/projects/" + project + "/tasks"},
+			{"PATCH", "/projects/" + project + "/tasks/" + task.ID},
 		} {
 			res := do(t, app, r.method, r.path, `{"title":"Other","assignee_id":`+value+`}`)
 			body := decodeError(t, res)
@@ -445,7 +421,7 @@ func TestBadAssignee(t *testing.T) {
 
 func TestUpdateOrder(t *testing.T) {
 	app, id := newApp(t)
-	missing := "/environments/" + environment + "/tasks/01jd8x3k7q00000000000000zz"
+	missing := "/projects/" + project + "/tasks/01jd8x3k7q00000000000000zz"
 
 	// The body before the task, and the task before identity.
 	if res := do(t, app, "PATCH", missing, `{"title":"","assignee_id":"`+assignee+`"}`); res.StatusCode != fiber.StatusUnprocessableEntity {
@@ -453,9 +429,6 @@ func TestUpdateOrder(t *testing.T) {
 	}
 	if res := do(t, app, "PATCH", missing, `{"assignee_id":"`+assignee+`"}`); res.StatusCode != fiber.StatusNotFound {
 		t.Fatalf("assign a missing task: status %d", res.StatusCode)
-	}
-	if res := doWithout(t, app, ProjectHeader, "PATCH", missing, `{"assignee_id":"`+assignee+`"}`); res.StatusCode != fiber.StatusNotFound {
-		t.Fatalf("assign a missing task without a project: status %d", res.StatusCode)
 	}
 	if got := id.calls(); len(got) != 0 {
 		t.Fatalf("identity asked %q", got)
@@ -471,7 +444,6 @@ func send(t *testing.T, app *fiber.App, contentType, method, path, body string) 
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set(MemberHeader, member)
-	req.Header.Set(ProjectHeader, project)
 	res, err := app.Test(req)
 	if err != nil {
 		t.Fatal(err)
@@ -483,8 +455,8 @@ func send(t *testing.T, app *fiber.App, contentType, method, path, body string) 
 // +json type parses; a DELETE never reads its body.
 func TestBodyMustBeJSON(t *testing.T) {
 	app, _ := newApp(t)
-	task := create(t, app, environment, "Launch")
-	path := "/environments/" + environment + "/tasks"
+	task := create(t, app, project, "Launch")
+	path := "/projects/" + project + "/tasks"
 	for _, tc := range []struct{ method, path, contentType, body string }{
 		{"POST", path, "", `{"title":"x"}`},
 		{"POST", path, "", ""},
@@ -517,11 +489,11 @@ func TestBodyMustBeJSON(t *testing.T) {
 // A title's limit counts characters, not bytes.
 func TestTitleLimitIsCharacters(t *testing.T) {
 	app, _ := newApp(t)
-	path := "/environments/" + environment + "/tasks"
+	path := "/projects/" + project + "/tasks"
 	if res := do(t, app, "POST", path, `{"title":"`+strings.Repeat("é", 255)+`"}`); res.StatusCode != fiber.StatusCreated {
 		t.Fatalf("255 characters: status %d", res.StatusCode)
 	}
-	task := create(t, app, environment, "Launch")
+	task := create(t, app, project, "Launch")
 	for _, tc := range []struct{ method, path string }{{"POST", path}, {"PATCH", path + "/" + task.ID}} {
 		res := do(t, app, tc.method, tc.path, `{"title":"`+strings.Repeat("é", 256)+`"}`)
 		if body := decodeError(t, res); res.StatusCode != fiber.StatusUnprocessableEntity || body.Error.Message != "Title is too long." {
@@ -543,28 +515,28 @@ func TestWriteFindsNoRow(t *testing.T) {
 	}
 	store := NewStore(sqlDB)
 	ctx := context.Background()
-	task := &Task{ID: "01jd8x3k7q00000000000000tt", EnvironmentID: environment, Title: "Launch", Status: "todo", CreatedBy: member, CreatedAt: "t", UpdatedAt: "t"}
+	task := &Task{ID: "01jd8x3k7q00000000000000tt", ProjectID: project, Title: "Launch", Status: "todo", CreatedBy: member, CreatedAt: "t", UpdatedAt: "t"}
 	if err := store.Insert(ctx, task); err != nil {
 		t.Fatal(err)
 	}
 	moved := *task
-	moved.EnvironmentID = other
+	moved.ProjectID = other
 	if ok, err := store.Update(ctx, &moved); err != nil || ok {
-		t.Fatalf("update in another environment: %v, %v", ok, err)
+		t.Fatalf("update in another project: %v, %v", ok, err)
 	}
 	if ok, err := store.Delete(ctx, other, task.ID); err != nil || ok {
-		t.Fatalf("delete in another environment: %v, %v", ok, err)
+		t.Fatalf("delete in another project: %v, %v", ok, err)
 	}
 	if ok, err := store.Update(ctx, task); err != nil || !ok {
 		t.Fatalf("update: %v, %v", ok, err)
 	}
-	if ok, err := store.Delete(ctx, environment, task.ID); err != nil || !ok {
+	if ok, err := store.Delete(ctx, project, task.ID); err != nil || !ok {
 		t.Fatalf("delete: %v, %v", ok, err)
 	}
 	if ok, err := store.Update(ctx, task); err != nil || ok {
 		t.Fatalf("update after delete: %v, %v", ok, err)
 	}
-	if ok, err := store.Delete(ctx, environment, task.ID); err != nil || ok {
+	if ok, err := store.Delete(ctx, project, task.ID); err != nil || ok {
 		t.Fatalf("delete after delete: %v, %v", ok, err)
 	}
 }
@@ -573,8 +545,8 @@ func TestWriteFindsNoRow(t *testing.T) {
 // before any other check, and nothing is written.
 func TestUnknownFields(t *testing.T) {
 	app, id := newApp(t)
-	task := create(t, app, environment, "Launch")
-	path := "/environments/" + environment + "/tasks"
+	task := create(t, app, project, "Launch")
+	path := "/projects/" + project + "/tasks"
 	for _, tc := range []struct {
 		method, path, body string
 		paths              []string

@@ -46,11 +46,11 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		// An environment is a Plat5 node: its tasks are keyed by its id, and go when it's purged.
-		// assignee_id is a member id in the environment's tree, or NULL.
+		// A project is a Plat5 node: its tasks are keyed by its id, and go when it's purged.
+		// assignee_id is a member id in the project's tree, or NULL.
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY NOT NULL,
-			environment_id TEXT NOT NULL,
+			project_id TEXT NOT NULL,
 			title TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'todo',
 			assignee_id TEXT,
@@ -58,7 +58,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE INDEX IF NOT EXISTS tasks_environment_id_idx ON tasks (environment_id)`,
+		`CREATE INDEX IF NOT EXISTS tasks_project_id_idx ON tasks (project_id)`,
 		// The last event acted on in identity's lifecycle log: one row, an opaque decimal
 		// string. Kept with the data it cleans up, so a restore rewinds both together.
 		`CREATE TABLE IF NOT EXISTS feed_cursors (

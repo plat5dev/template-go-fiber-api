@@ -91,8 +91,8 @@ func main() {
 	app.Get("/users/:user_id/profile", profileHandler.Get)
 	app.Put("/users/:user_id/profile", profileHandler.Upsert)
 
-	// An environment is a Plat5 node: its id is in the path, from the front door.
-	taskRoutes := app.Group("/environments/:environment_id/tasks")
+	// A project is a Plat5 node: its id is in the path, from the front door.
+	taskRoutes := app.Group("/projects/:project_id/tasks")
 	taskRoutes.Get("/", taskHandler.List)
 	taskRoutes.Post("/", taskHandler.Create)
 	taskRoutes.Get("/:task_id", taskHandler.Get)
@@ -139,7 +139,7 @@ func main() {
 		}()
 	} else {
 		close(following)
-		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's lifecycle log, so a purged environment's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
+		baseLogger.Warn().Msg("IDENTITY_INTERNAL_URL is unset: not reading identity's lifecycle log, so a purged project's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
 	}
 
 	// No startup banner on either app: every line on stdout is JSON (plat5

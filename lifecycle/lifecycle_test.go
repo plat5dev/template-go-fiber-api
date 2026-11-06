@@ -138,10 +138,10 @@ func setup(t *testing.T, id *identity) *Consumer {
 	return c
 }
 
-func addTask(t *testing.T, c *Consumer, id, environmentID string) {
+func addTask(t *testing.T, c *Consumer, id, projectID string) {
 	t.Helper()
 	err := c.tasks.Insert(context.Background(), &tasks.Task{
-		ID: id, EnvironmentID: environmentID, Title: "t", Status: "todo",
+		ID: id, ProjectID: projectID, Title: "t", Status: "todo",
 		CreatedBy: "01jd8x3k7q00000000000000mm", CreatedAt: "now", UpdatedAt: "now",
 	})
 	if err != nil {
@@ -149,9 +149,9 @@ func addTask(t *testing.T, c *Consumer, id, environmentID string) {
 	}
 }
 
-func count(t *testing.T, c *Consumer, environmentID string) int {
+func count(t *testing.T, c *Consumer, projectID string) int {
 	t.Helper()
-	list, _, err := c.tasks.ListByEnvironment(context.Background(), environmentID, pagination.Page{Limit: 100})
+	list, _, err := c.tasks.ListByProject(context.Background(), projectID, pagination.Page{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,13 +217,13 @@ func run(t *testing.T, c *Consumer, cond func() bool) {
 
 func theLog() *identity {
 	return newIdentity(
-		Event{ID: "7", Type: "node.created", Kind: "environment", NodeID: purged},
+		Event{ID: "7", Type: "node.created", Kind: "project", NodeID: purged},
 		Event{ID: "8", Type: "user.created", UserID: fresh},
 		Event{ID: "9", Type: "node.purged", Kind: "organization", NodeID: kept},
 		Event{ID: "10", Type: "member.removed"},
-		Event{ID: "12", Type: "node.purged", Kind: "environment", NodeID: purged},
+		Event{ID: "12", Type: "node.purged", Kind: "project", NodeID: purged},
 		Event{ID: "13", Type: "user.deleted", UserID: gone},
-		Event{ID: "20", Type: "node.deleted", Kind: "environment", NodeID: kept},
+		Event{ID: "20", Type: "node.deleted", Kind: "project", NodeID: kept},
 	)
 }
 
@@ -238,10 +238,10 @@ func seed(t *testing.T, c *Consumer) {
 func checkActed(t *testing.T, c *Consumer) {
 	t.Helper()
 	if n := count(t, c, purged); n != 0 {
-		t.Fatalf("purged environment has %d tasks", n)
+		t.Fatalf("purged project has %d tasks", n)
 	}
 	if n := count(t, c, kept); n != 1 {
-		t.Fatalf("other environment has %d tasks, want 1", n)
+		t.Fatalf("other project has %d tasks, want 1", n)
 	}
 	if hasProfile(t, c, gone) {
 		t.Fatal("deleted person's profile is kept")
@@ -412,7 +412,7 @@ func TestAPageCommitsWithItsCursor(t *testing.T) {
 		}
 	}
 	if n := count(t, c, purged); n != 1 {
-		t.Fatalf("purged environment has %d tasks, want its delete rolled back", n)
+		t.Fatalf("purged project has %d tasks, want its delete rolled back", n)
 	}
 	if cur := cursor(t, c); cur != "" {
 		t.Fatalf("cursor = %q", cur)
