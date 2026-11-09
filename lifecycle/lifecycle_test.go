@@ -28,9 +28,9 @@ const (
 )
 
 // identity serves the one lifecycle log at /internal/events as identity does: types
-// filters, two events to a page, no after is answered at once, and with after it waits for
-// a matching event up to wait, then answers 204. The first requests answer fail's
-// statuses, one each.
+// filters, two events to a page, an after past the newest event is a 409 CURSOR_AHEAD,
+// and otherwise it waits for a matching event up to wait, then answers 204. The first
+// requests answer fail's statuses, one each.
 type identity struct {
 	mu      sync.Mutex
 	events  []Event
@@ -57,10 +57,10 @@ func (id *identity) add(e Event) {
 
 // page is the events after after that match types, at most two, and whether more follow.
 func (id *identity) page(after string, types []string) ([]Event, bool) {
-	n, _ := strconv.Atoi(after)
+	n := atoi(after)
 	var match []Event
 	for _, e := range id.events {
-		if m, _ := strconv.Atoi(e.ID); m > n && slices.Contains(types, e.Type) {
+		if atoi(e.ID) > n && slices.Contains(types, e.Type) {
 			match = append(match, e)
 		}
 	}
@@ -85,9 +85,19 @@ func (id *identity) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		return
 	}
+	newest := 0
+	if len(id.events) > 0 {
+		newest = atoi(id.events[len(id.events)-1].ID)
+	}
+	if atoi(after) > newest {
+		id.mu.Unlock()
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"CURSOR_AHEAD","message":"The log has no event at this cursor. Read from its first event.","request_id":null,"details":null}}`))
+		return
+	}
 	events, more := id.page(after, types)
 	timeout := time.After(id.wait)
-	for after != "" && len(events) == 0 {
+	for len(events) == 0 {
 		added := id.added
 		id.mu.Unlock()
 		select { // tell a test the read is waiting, if it's listening
@@ -110,6 +120,11 @@ func (id *identity) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		events = []Event{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"events": events, "has_more": more})
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 func (id *identity) askedAfter() []string {
@@ -177,13 +192,11 @@ func cursor(t *testing.T, c *Consumer) string {
 	return cur
 }
 
-func step(t *testing.T, c *Consumer) bool {
+func step(t *testing.T, c *Consumer) {
 	t.Helper()
-	again, err := c.Step(context.Background())
-	if err != nil {
+	if err := c.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	return again
 }
 
 // run runs c until cond holds, then stops it and waits for Run to return.
@@ -253,11 +266,8 @@ func TestActsOnEachPageAndAdvancesTheCursor(t *testing.T) {
 	seed(t, c)
 
 	// No cursor yet: from the first event, then from each page's last id.
-	for range 2 {
-		if !step(t, c) {
-			t.Fatal("a page should be followed at once by another ask")
-		}
-	}
+	step(t, c)
+	step(t, c)
 	checkActed(t, c)
 	if cur := cursor(t, c); cur != "13" {
 		t.Fatalf("cursor = %q, want 13", cur)
@@ -272,16 +282,14 @@ func TestActsOnEachPageAndAdvancesTheCursor(t *testing.T) {
 	}
 }
 
-func TestA204IsAskedAgainAtOnce(t *testing.T) {
+func TestA204ChangesNothing(t *testing.T) {
 	id := theLog()
 	c := setup(t, id)
 	step(t, c)
 	step(t, c)
 
 	// At the head: identity waits, answers 204, and nothing changes.
-	if !step(t, c) {
-		t.Fatal("a 204 should be followed at once by another ask")
-	}
+	step(t, c)
 	if cur := cursor(t, c); cur != "13" {
 		t.Fatalf("cursor after a 204 = %q", cur)
 	}
@@ -324,7 +332,7 @@ func TestAnErrorIsRetried(t *testing.T) {
 	c := setup(t, id)
 	seed(t, c)
 
-	if _, err := c.Step(context.Background()); err == nil {
+	if err := c.Step(context.Background()); err == nil {
 		t.Fatal("want an error from a 503")
 	}
 	if cur := cursor(t, c); cur != "" {
@@ -339,18 +347,20 @@ func TestAnErrorIsRetried(t *testing.T) {
 	}
 }
 
-func TestAnEmptyLogIsNotAskedInATightLoop(t *testing.T) {
-	id := newIdentity()
+func TestAResetLogIsReadAgainFromItsFirstEvent(t *testing.T) {
+	id := theLog()
 	c := setup(t, id)
-	if step(t, c) {
-		t.Fatal("an immediate empty answer should wait before asking again")
+	seed(t, c)
+	// A cursor saved past the log's newest event: identity's log was reset.
+	if _, err := c.db.Exec(`INSERT INTO feed_cursors (id, event_id) VALUES (1, '99')`); err != nil {
+		t.Fatal(err)
 	}
-	c.retry = 50 * time.Millisecond
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
-	defer cancel()
-	c.Run(ctx)
-	if n := len(id.askedAfter()); n > 5 {
-		t.Fatalf("asked %d times in 120ms", n)
+	addProfile(t, c, gone) // acted on before the reset; deleted again, harmlessly
+
+	run(t, c, func() bool { return cursor(t, c) == "13" })
+	checkActed(t, c)
+	if got := id.askedAfter(); !slices.Equal(got[:3], []string{"99", "", "12"}) {
+		t.Fatalf("asked after %q", got)
 	}
 }
 
@@ -400,7 +410,7 @@ func TestAPageCommitsWithItsCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err := c.Step(context.Background()); err == nil {
+		if err := c.Step(context.Background()); err == nil {
 			t.Fatal("want an error when the cursor can't be saved")
 		}
 	}
