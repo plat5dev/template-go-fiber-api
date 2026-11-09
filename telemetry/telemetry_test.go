@@ -5,70 +5,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
-func TestExporterIncludesOTLP(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name             string
-		list             []string
-		defaultWhenUnset bool
-		want             bool
-	}{
-		{name: "traces default unset", list: nil, defaultWhenUnset: true, want: true},
-		{name: "metrics default unset", list: nil, defaultWhenUnset: false, want: false},
-		{name: "explicit otlp", list: []string{"otlp"}, defaultWhenUnset: false, want: true},
-		{name: "otlp and prometheus", list: []string{"otlp", "prometheus"}, defaultWhenUnset: false, want: true},
-		{name: "prometheus only", list: []string{"prometheus"}, defaultWhenUnset: true, want: false},
-		{name: "none", list: []string{"none"}, defaultWhenUnset: true, want: false},
-		{name: "empty slice not unset", list: []string{}, defaultWhenUnset: true, want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := exporterIncludesOTLP(tt.list, tt.defaultWhenUnset)
-			if got != tt.want {
-				t.Fatalf("exporterIncludesOTLP(%v, %v) = %v, want %v", tt.list, tt.defaultWhenUnset, got, tt.want)
-			}
-		})
+// unsetAll clears every telemetry variable for the test.
+func unsetAll(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"OTEL_SDK_DISABLED", "OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER",
+		"OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+		"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+		"OTEL_TRACES_SAMPLER_RATIO", "OTEL_METRIC_EXPORT_INTERVAL", "OTEL_RESOURCE_ATTRIBUTES",
+		"OTEL_SERVICE_VERSION",
+	} {
+		t.Setenv(key, "")
 	}
 }
 
-func TestEnvExporterList(t *testing.T) {
-	t.Setenv("OTEL_METRICS_EXPORTER", " otlp , Prometheus ")
-	got, err := envExporterList("OTEL_METRICS_EXPORTER", "otlp", "prometheus", "none")
-	if err != nil || len(got) != 2 || got[0] != "otlp" || got[1] != "prometheus" {
-		t.Fatalf("envExporterList = %#v, %v", got, err)
-	}
-
-	for _, unset := range []string{"", " , "} {
-		t.Setenv("OTEL_METRICS_EXPORTER", unset)
-		if got, err := envExporterList("OTEL_METRICS_EXPORTER", "otlp"); got != nil || err != nil {
-			t.Fatalf("%q: want nil, nil; got %#v, %v", unset, got, err)
-		}
-	}
-
-	t.Setenv("OTEL_TRACES_EXPORTER", "console")
-	if _, err := envExporterList("OTEL_TRACES_EXPORTER", "otlp", "none"); err == nil {
-		t.Fatal("console: want an error")
-	}
-}
-
-// Each set-but-invalid value in telemetry.md's "Invalid values" table stops Init
-// (and so the API) with an error naming the variable.
-func TestInitRefusesInvalidValues(t *testing.T) {
-	tests := []struct{ key, value string }{
+// Each set-but-invalid value in telemetry.md's "Invalid values" table stops Setup (and so
+// the API) with an error naming the variable.
+func TestSetupRefusesInvalidValues(t *testing.T) {
+	for _, tt := range []struct{ key, value string }{
 		{"OTEL_TRACES_EXPORTER", "jaeger"},
 		{"OTEL_TRACES_EXPORTER", "otlp,prometheus"},
+		{"OTEL_TRACES_EXPORTER", "otlp,"},
 		{"OTEL_METRICS_EXPORTER", "otlp,statsd"},
 		{"OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"},
 		{"OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/json"},
@@ -85,142 +52,137 @@ func TestInitRefusesInvalidValues(t *testing.T) {
 		{"OTEL_SDK_DISABLED", "yes"},
 		{"OTEL_RESOURCE_ATTRIBUTES", "service.namespace"},
 		{"OTEL_RESOURCE_ATTRIBUTES", "a=b,=c"},
-	}
-	for _, tt := range tests {
+	} {
 		t.Run(tt.key+"="+tt.value, func(t *testing.T) {
+			unsetAll(t)
 			t.Setenv(tt.key, tt.value)
-			_, err := Init(context.Background())
-			if err == nil {
-				t.Fatalf("Init accepted %s=%q", tt.key, tt.value)
-			}
-			if !strings.Contains(err.Error(), tt.key) {
-				t.Fatalf("error %q does not name %s", err, tt.key)
+			_, err := Setup(context.Background(), "dev")
+			if err == nil || !strings.Contains(err.Error(), tt.key) {
+				t.Fatalf("Setup with %s=%q: %v, want an error naming it", tt.key, tt.value, err)
 			}
 		})
 	}
 }
 
-func TestInitAcceptsValidValues(t *testing.T) {
+func TestSetupAcceptsValidValues(t *testing.T) {
+	unsetAll(t)
 	for key, value := range map[string]string{
-		"OTEL_TRACES_EXPORTER":               "otlp,none",
-		"OTEL_METRICS_EXPORTER":              "prometheus,none",
-		"OTEL_EXPORTER_OTLP_PROTOCOL":        "http/protobuf",
-		"OTEL_EXPORTER_OTLP_ENDPOINT":        "https://collector.example",
-		"OTEL_TRACES_SAMPLER_RATIO":          "0.25",
-		"OTEL_METRIC_EXPORT_INTERVAL":        "5000",
-		"OTEL_SDK_DISABLED":                  "true",
-		"OTEL_RESOURCE_ATTRIBUTES":           "service.namespace=edge,deployment.environment=dev",
-		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "",
+		"OTEL_TRACES_EXPORTER":        "otlp,none",
+		"OTEL_METRICS_EXPORTER":       "Prometheus, none",
+		"OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example",
+		"OTEL_TRACES_SAMPLER_RATIO":   "0.25",
+		"OTEL_METRIC_EXPORT_INTERVAL": "5000",
+		"OTEL_SDK_DISABLED":           "TRUE",
+		"OTEL_RESOURCE_ATTRIBUTES":    "service.namespace=edge,deployment.environment=dev",
 	} {
 		t.Setenv(key, value)
 	}
-	if _, err := Init(context.Background()); err != nil {
+	if _, err := Setup(context.Background(), "dev"); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// A failed export reaches OpenTelemetry's error handler, which writes one JSON line.
-func TestErrorHandlerLogsJSON(t *testing.T) {
+// What the variables turn on (plat5 docs/reference/telemetry.md#exporter-selection).
+func TestWhatIsPushed(t *testing.T) {
+	for _, tt := range []struct {
+		env             map[string]string
+		traces, metrics bool
+	}{
+		{map[string]string{}, false, false},
+		{map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4318"}, true, true},
+		{map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4318", "OTEL_METRICS_EXPORTER": "prometheus"}, true, false},
+		{map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4318", "OTEL_TRACES_EXPORTER": "none"}, false, true},
+		{map[string]string{"OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4318", "OTEL_SDK_DISABLED": "true"}, false, false},
+		{map[string]string{"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://c:4318/v1/traces"}, true, false},
+		{map[string]string{"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://c:4318/v1/metrics", "OTEL_METRICS_EXPORTER": "otlp,prometheus"}, false, true},
+	} {
+		unsetAll(t)
+		for k, v := range tt.env {
+			t.Setenv(k, v)
+		}
+		s, err := readSettings()
+		if err != nil || s.traces != tt.traces || s.metrics != tt.metrics {
+			t.Errorf("%v: traces %v, metrics %v, %v; want %v, %v", tt.env, s.traces, s.metrics, err, tt.traces, tt.metrics)
+		}
+	}
+}
+
+// With a base endpoint, traces go to its /v1/traces, as the exporter reads the standard
+// variables.
+func TestTracesGoToTheEndpoint(t *testing.T) {
+	unsetAll(t)
+	paths := make(chan string, 10)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths <- r.URL.Path
+	}))
+	defer collector.Close()
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.URL+"/otlp")
+	t.Setenv("OTEL_METRICS_EXPORTER", "none")
+	prev := otel.GetTracerProvider()
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	shutdown, err := Setup(context.Background(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, span := otel.Tracer("test").Start(context.Background(), "x")
+	span.End()
+	if err := shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-paths; got != "/otlp/v1/traces" {
+		t.Fatalf("exported to %q", got)
+	}
+}
+
+// The logger writes Plat5's field names, and OpenTelemetry's errors (a failed export) are
+// one JSON line through it.
+func TestLogLines(t *testing.T) {
 	var buf bytes.Buffer
-	prev := otel.GetErrorHandler()
-	otel.SetErrorHandler(ErrorHandler(zerolog.New(&buf)))
-	t.Cleanup(func() { otel.SetErrorHandler(prev) })
+	prev := slog.Default()
+	slog.SetDefault(NewLogger(&buf))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	unsetAll(t)
+	if _, err := Setup(context.Background(), "dev"); err != nil {
+		t.Fatal(err)
+	}
 
 	otel.Handle(errors.New("traces export: connection refused"))
 
 	var line map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &line); err != nil {
+	if err := json.Unmarshal(buf.Bytes(), &line); err != nil {
 		t.Fatalf("not one JSON line: %q", buf.String())
 	}
-	if line["level"] != "error" || line["message"] != "telemetry error" || line["error_message"] != "traces export: connection refused" {
+	if line["level"] != "error" || line["message"] != "telemetry error" || line["error_message"] != "traces export: connection refused" || line["timestamp"] == nil {
 		t.Fatalf("line = %v", line)
 	}
 }
 
-func serviceVersion(t *testing.T) string {
-	t.Helper()
-	res, err := buildResource(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, _ := res.Set().Value(semconv.ServiceVersionKey)
-	return v.AsString()
-}
-
-// service.version: OTEL_SERVICE_VERSION, then OTEL_RESOURCE_ATTRIBUTES, then the
-// compiled Version, which is dev without a VERSION at build time.
+// service.version: OTEL_SERVICE_VERSION, then OTEL_RESOURCE_ATTRIBUTES, then the build's.
 func TestServiceVersion(t *testing.T) {
-	t.Setenv("OTEL_SERVICE_VERSION", "")
-	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "")
-	t.Setenv("CI_COMMIT_TAG", "v9.9.9")
-
-	if got := serviceVersion(t); got != "dev" {
-		t.Fatalf("without VERSION: %q, want dev", got)
+	unsetAll(t)
+	version := func(build string) string {
+		t.Helper()
+		res, err := newResource(context.Background(), build)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _ := res.Set().Value(semconv.ServiceVersionKey)
+		return v.AsString()
 	}
-
-	prev := Version
-	Version = "v1.2.3"
-	t.Cleanup(func() { Version = prev })
-	if got := serviceVersion(t); got != "v1.2.3" {
-		t.Fatalf("with VERSION: %q, want v1.2.3", got)
+	if got := version("dev"); got != "dev" {
+		t.Fatalf("without VERSION: %q", got)
 	}
-
+	if got := version("v1.2.3"); got != "v1.2.3" {
+		t.Fatalf("with VERSION: %q", got)
+	}
 	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "service.version=v2.0.0")
-	if got := serviceVersion(t); got != "v2.0.0" {
-		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES: %q, want v2.0.0", got)
+	if got := version("v1.2.3"); got != "v2.0.0" {
+		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES: %q", got)
 	}
-
 	t.Setenv("OTEL_SERVICE_VERSION", "v3.0.0")
-	if got := serviceVersion(t); got != "v3.0.0" {
-		t.Fatalf("OTEL_SERVICE_VERSION: %q, want v3.0.0", got)
-	}
-}
-
-func TestDefaults(t *testing.T) {
-	for _, key := range []string{"OTEL_SDK_DISABLED", "OTEL_TRACES_SAMPLER_RATIO", "OTEL_METRIC_EXPORT_INTERVAL"} {
-		t.Setenv(key, "")
-	}
-	if disabled, err := envBool("OTEL_SDK_DISABLED"); disabled || err != nil {
-		t.Fatalf("OTEL_SDK_DISABLED unset: %v, %v", disabled, err)
-	}
-	t.Setenv("OTEL_SDK_DISABLED", "TRUE")
-	if disabled, err := envBool("OTEL_SDK_DISABLED"); !disabled || err != nil {
-		t.Fatalf("OTEL_SDK_DISABLED=TRUE: %v, %v", disabled, err)
-	}
-	if ratio, err := samplerRatio(); ratio != 1 || err != nil {
-		t.Fatalf("sampler ratio: %v, %v", ratio, err)
-	}
-	if interval, err := metricExportInterval(); interval != 60*time.Second || err != nil {
-		t.Fatalf("export interval: %v, %v", interval, err)
-	}
-}
-
-func TestResolveOTLPEndpoint(t *testing.T) {
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
-	dest, err := resolveOTLPEndpoint("traces", "/v1/traces")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dest != nil {
-		t.Fatalf("expected nil dest, got %#v", dest)
-	}
-
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-	dest, err = resolveOTLPEndpoint("traces", "/v1/traces")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dest == nil || dest.host != "localhost:4318" || dest.path != "/v1/traces" || !dest.insecure {
-		t.Fatalf("base endpoint: %#v", dest)
-	}
-
-	t.Setenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "https://collector.example/v1/traces")
-	dest, err = resolveOTLPEndpoint("traces", "/v1/traces")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dest == nil || dest.host != "collector.example" || dest.path != "/v1/traces" || dest.insecure {
-		t.Fatalf("per-signal override: %#v", dest)
+	if got := version("v1.2.3"); got != "v3.0.0" {
+		t.Fatalf("OTEL_SERVICE_VERSION: %q", got)
 	}
 }

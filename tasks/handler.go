@@ -1,260 +1,228 @@
 package tasks
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/oklog/ulid/v2"
 
 	"github.com/example/go-fiber-api/access"
-	"github.com/example/go-fiber-api/audit"
-	"github.com/example/go-fiber-api/errors"
-	"github.com/example/go-fiber-api/jsonbody"
-	"github.com/example/go-fiber-api/pagination"
-	"github.com/example/go-fiber-api/telemetry"
+	"github.com/example/go-fiber-api/plat5"
 )
 
-const (
-	// MemberHeader is the caller's member id in the project's tree, from the front door.
-	// A create records it as the task's author, and answers 400 without it.
-	MemberHeader = "X-Plat5-Member-Id"
-)
+// MemberHeader is the caller's member id in the project's tree, from the front door. A
+// create records it as the task's author, and answers 400 without it.
+const MemberHeader = "X-Plat5-Member-Id"
 
+// Handler serves a project's tasks. Every handler scopes its lookups by the project id in
+// the path, and checks nothing about the caller or the project: the front door decided who
+// may call, on which project. An assignee isn't the caller, so a write that sets one asks
+// identity, after the body and (on an update) the task, before writing.
 type Handler struct {
 	store              *Store
-	telem              *telemetry.Telemetry
 	access             *access.Client
 	assigneePermission string
 }
 
 // NewHandler checks each assignee with access: they must hold assigneePermission on the
 // project.
-func NewHandler(store *Store, telem *telemetry.Telemetry, access *access.Client, assigneePermission string) *Handler {
-	return &Handler{store: store, telem: telem, access: access, assigneePermission: assigneePermission}
+func NewHandler(store *Store, access *access.Client, assigneePermission string) *Handler {
+	return &Handler{store: store, access: access, assigneePermission: assigneePermission}
 }
 
-// AssigneeID is raw, to tell an absent assignee_id from null: see parseAssignee.
-type createBody struct {
-	Title      string          `json:"title"`
-	Status     *string         `json:"status"`
-	AssigneeID json.RawMessage `json:"assignee_id"`
+// body is a create's or an update's.
+type body struct {
+	Title      plat5.Field[string] `json:"title"`
+	Status     plat5.Field[string] `json:"status"`
+	AssigneeID plat5.Field[string] `json:"assignee_id"`
 }
 
-type updateBody struct {
-	Title      *string         `json:"title"`
-	Status     *string         `json:"status"`
-	AssigneeID json.RawMessage `json:"assignee_id"`
-}
-
-// maxTitle is a title's longest, in characters (Unicode code points), after trimming.
+// maxTitle is a title's longest, in characters (code points), once trimmed.
 const maxTitle = 255
 
-var validStatus = map[string]bool{"todo": true, "in_progress": true, "done": true}
+// title is a title as sent, trimmed, or a wrong field.
+func title(f plat5.Field[string], bad *plat5.FieldErrors) string {
+	t := strings.TrimSpace(f.Value)
+	switch {
+	case f.Null || f.Wrong:
+		bad.Add("title", "")
+	case t == "":
+		bad.Add("title", "Title is required.")
+	case utf8.RuneCountInString(t) > maxTitle:
+		bad.Add("title", "Title is too long.")
+	}
+	return t
+}
 
-// parseAssignee reads a body's assignee_id: absent (set is false), null (id is nil), or a
-// member id. Anything else is a 422 at assignee_id.
-func parseAssignee(raw json.RawMessage) (set bool, id *string, err error) {
-	if raw == nil {
-		return false, nil, nil
+// status is a status as sent, or a wrong field.
+func status(f plat5.Field[string], bad *plat5.FieldErrors) string {
+	if s := f.Value; !f.Null && !f.Wrong && (s == "todo" || s == "in_progress" || s == "done") {
+		return s
 	}
-	if string(raw) == "null" {
-		return true, nil, nil
+	bad.Add("status", "Status must be todo, in progress, or done.")
+	return ""
+}
+
+// assignee is a member id, nil for null, or a wrong field.
+func assignee(f plat5.Field[string], bad *plat5.FieldErrors) *string {
+	switch {
+	case f.Null:
+		return nil
+	case f.Wrong || !plat5.IsID(f.Value):
+		bad.Add("assignee_id", "")
 	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return true, nil, errors.FieldError("assignee_id", "")
-	}
-	if _, err := ulid.ParseStrict(s); err != nil || s != strings.ToLower(s) {
-		return true, nil, errors.FieldError("assignee_id", "")
-	}
-	return true, &s, nil
+	return &f.Value
 }
 
 // checkAssignee asks identity whether the assignee holds the assignee permission on the
-// project in the path. The caller may assign, but the assignee isn't the caller, so the
-// front door decided nothing about them
-// (plat5 docs/guides/write-a-service.md#checking-access-outside-a-request). No answer is
-// no: a 503, so nothing is written.
-func (h *Handler) checkAssignee(c fiber.Ctx, assigneeID string) error {
-	projectID := c.Params("project_id")
-	allowed, err := h.access.Evaluate(c.Context(), c.Get("X-Request-ID"), assigneeID, "project", projectID, h.assigneePermission)
+// project in the path. No answer is no: a 503, so nothing is written.
+func (h *Handler) checkAssignee(c fiber.Ctx, assigneeID *string) error {
+	if assigneeID == nil {
+		return nil
+	}
+	allowed, err := h.access.Evaluate(c.Context(), c.Get("X-Request-ID"), *assigneeID, "project", c.Params("project_id"), h.assigneePermission)
 	if err != nil {
-		return errors.ServiceUnavailableError()
+		return plat5.Unavailable(err)
 	}
 	if !allowed {
-		return errors.FieldError("assignee_id", "That person can't see this project.")
+		return plat5.Invalid("assignee_id", "That person can't see this project.")
 	}
 	return nil
 }
 
-// Every handler scopes its lookups by the project id in the path, and checks nothing
-// about the caller or the project: the front door decided who may call, on which
-// project. A write that sets an assignee checks the assignee, in this order: the body,
-// the task (on an update), then identity's answer, before writing.
-
 func (h *Handler) List(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
-	page, err := pagination.Parse(c)
+	page, err := plat5.ReadPage(c)
 	if err != nil {
 		return err
 	}
-	list, more, err := h.store.ListByProject(c.Context(), projectID, page)
+	list, more, err := h.store.List(c.Context(), c.Params("project_id"), page)
 	if err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
 	return c.JSON(fiber.Map{"tasks": list, "has_more": more})
 }
 
 func (h *Handler) Create(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
 	memberID := c.Get(MemberHeader)
 	if memberID == "" {
-		return errors.InvalidRequestError()
+		return plat5.InvalidRequest()
 	}
-	var body createBody
-	if err := jsonbody.Read(c, &body); err != nil {
+	var b body
+	if err := plat5.ReadBody(c, &b); err != nil {
 		return err
 	}
-	title := strings.TrimSpace(body.Title)
-	if title == "" {
-		return errors.FieldError("title", "Title is required.")
+	var bad plat5.FieldErrors
+	t := &Task{ID: plat5.NewID(), ProjectID: c.Params("project_id"), Status: "todo", CreatedBy: memberID}
+	if b.Title.Set {
+		t.Title = title(b.Title, &bad)
+	} else {
+		bad.Add("title", "Title is required.")
 	}
-	if utf8.RuneCountInString(title) > maxTitle {
-		return errors.FieldError("title", "Title is too long.")
+	if b.Status.Set {
+		t.Status = status(b.Status, &bad)
 	}
-	status := "todo"
-	if body.Status != nil {
-		if !validStatus[*body.Status] {
-			return errors.FieldError("status", "Status must be todo, in progress, or done.")
-		}
-		status = *body.Status
+	if b.AssigneeID.Set {
+		t.AssigneeID = assignee(b.AssigneeID, &bad)
 	}
-	_, assigneeID, err := parseAssignee(body.AssigneeID)
-	if err != nil {
+	if err := bad.Err(); err != nil {
 		return err
 	}
-	if assigneeID != nil {
-		if err := h.checkAssignee(c, *assigneeID); err != nil {
-			return err
-		}
+	if err := h.checkAssignee(c, t.AssigneeID); err != nil {
+		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	t := &Task{
-		ID:         strings.ToLower(ulid.Make().String()),
-		ProjectID:  projectID,
-		Title:      title,
-		Status:     status,
-		AssigneeID: assigneeID,
-		CreatedBy:  memberID,
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
+	t.CreatedAt = plat5.Timestamp(time.Now())
+	t.UpdatedAt = t.CreatedAt
 	if err := h.store.Insert(c.Context(), t); err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
-	audit.Set(c, audit.Details{"task_id": t.ID, "title": t.Title, "status": t.Status, "assignee_id": t.AssigneeID})
-	audit.SetCreated(c, t.ID)
+	plat5.SetAuditDetails(c, plat5.Details{"task_id": t.ID, "title": t.Title, "status": t.Status, "assignee_id": t.AssigneeID})
+	plat5.SetAuditCreated(c, t.ID)
 	return c.Status(fiber.StatusCreated).JSON(t)
 }
 
 func (h *Handler) Get(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
-	taskID := c.Params("task_id")
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
+	t, err := h.store.Find(c.Context(), c.Params("project_id"), c.Params("task_id"))
 	if err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
 	if t == nil {
-		return errors.NotFoundError("task", taskID)
+		return plat5.NotFound("task", c.Params("task_id"))
 	}
 	return c.JSON(t)
 }
 
+// Update sets the fields sent. An absent or null title or status leaves it as it is; a
+// null assignee_id unassigns.
 func (h *Handler) Update(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
+	var b body
+	if err := plat5.ReadBody(c, &b); err != nil {
+		return err
+	}
+	var bad plat5.FieldErrors
+	var newTitle, newStatus string
+	var newAssignee *string
+	if b.Title.Set && !b.Title.Null {
+		newTitle = title(b.Title, &bad)
+	}
+	if b.Status.Set && !b.Status.Null {
+		newStatus = status(b.Status, &bad)
+	}
+	if b.AssigneeID.Set {
+		newAssignee = assignee(b.AssigneeID, &bad)
+	}
+	if err := bad.Err(); err != nil {
+		return err
+	}
+
 	taskID := c.Params("task_id")
-	var body updateBody
-	if err := jsonbody.Read(c, &body); err != nil {
-		return err
-	}
-	var title string
-	if body.Title != nil {
-		title = strings.TrimSpace(*body.Title)
-		if title == "" {
-			return errors.FieldError("title", "Title is required.")
-		}
-		if utf8.RuneCountInString(title) > maxTitle {
-			return errors.FieldError("title", "Title is too long.")
-		}
-	}
-	if body.Status != nil && !validStatus[*body.Status] {
-		return errors.FieldError("status", "Status must be todo, in progress, or done.")
-	}
-	assigneeSet, assigneeID, err := parseAssignee(body.AssigneeID)
+	t, err := h.store.Find(c.Context(), c.Params("project_id"), taskID)
 	if err != nil {
-		return err
-	}
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
-	if err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
 	if t == nil {
-		return errors.NotFoundError("task", taskID)
+		return plat5.NotFound("task", taskID)
 	}
-	// null unassigns, with nothing to check.
-	if assigneeID != nil {
-		if err := h.checkAssignee(c, *assigneeID); err != nil {
-			return err
-		}
+	if err := h.checkAssignee(c, newAssignee); err != nil {
+		return err
 	}
+
 	before := *t
-	if body.Title != nil {
-		t.Title = title
+	if newTitle != "" {
+		t.Title = newTitle
 	}
-	if body.Status != nil {
-		t.Status = *body.Status
+	if newStatus != "" {
+		t.Status = newStatus
 	}
-	if assigneeSet {
-		t.AssigneeID = assigneeID
+	if b.AssigneeID.Set {
+		t.AssigneeID = newAssignee
 	}
-	t.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	t.UpdatedAt = plat5.Timestamp(time.Now())
 	updated, err := h.store.Update(c.Context(), t)
 	if err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
-	// Deleted since the read: the same 404 the read would answer now.
+	// Deleted since the read: the 404 the read would answer now.
 	if !updated {
-		return errors.NotFoundError("task", taskID)
+		return plat5.NotFound("task", taskID)
 	}
-	changes := audit.Details{}
+	changes := plat5.Details{}
 	changes.Changed("title", before.Title, t.Title)
 	changes.Changed("status", before.Status, t.Status)
 	changes.ChangedNullable("assignee_id", before.AssigneeID, t.AssigneeID)
-	audit.Set(c, changes)
+	plat5.SetAuditDetails(c, changes)
 	return c.JSON(t)
 }
 
+// Delete sends no audit details: the route and the task id in its path say what happened.
 func (h *Handler) Delete(c fiber.Ctx) error {
-	projectID := c.Params("project_id")
 	taskID := c.Params("task_id")
-	t, err := h.store.FindInProject(c.Context(), projectID, taskID)
+	deleted, err := h.store.Delete(c.Context(), c.Params("project_id"), taskID)
 	if err != nil {
-		return errors.InternalError()
+		return plat5.DB(err)
 	}
-	if t == nil {
-		return errors.NotFoundError("task", taskID)
-	}
-	deleted, err := h.store.Delete(c.Context(), projectID, taskID)
-	if err != nil {
-		return errors.InternalError()
-	}
-	// Deleted since the read: the same 404 the read would answer now.
 	if !deleted {
-		return errors.NotFoundError("task", taskID)
+		return plat5.NotFound("task", taskID)
 	}
-	// No audit details: the route and the task id in its path say what happened.
 	return c.SendStatus(fiber.StatusNoContent)
 }

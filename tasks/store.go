@@ -1,17 +1,19 @@
+// Package tasks serves a project's tasks.
 package tasks
 
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
-	"github.com/example/go-fiber-api/metrics"
-	"github.com/example/go-fiber-api/pagination"
+	"github.com/example/go-fiber-api/plat5"
+	"github.com/example/go-fiber-api/telemetry"
 )
 
 // Task is authored data: CreatedBy is the member who made it, and stays theirs if they
 // leave the tree (plat5 docs/concepts/model.md#where-a-field-goes). AssigneeID is a member
-// in the same tree, or nil (null in JSON).
+// in the same tree, or nil (null).
 type Task struct {
 	ID         string  `json:"id"`
 	ProjectID  string  `json:"project_id"`
@@ -23,25 +25,10 @@ type Task struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-// conn runs the store's statements: the database, or a transaction (WithTx).
-type conn interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+// Store keeps tasks. Every statement is scoped by the project id.
+type Store struct{ db *sql.DB }
 
-type Store struct {
-	db conn
-}
-
-func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
-}
-
-// WithTx is the store writing in tx, so its writes commit or roll back with the rest of tx.
-func (s *Store) WithTx(tx *sql.Tx) *Store {
-	return &Store{db: tx}
-}
+func NewStore(db *sql.DB) *Store { return &Store{db} }
 
 const columns = `id, project_id, title, status, assignee_id, created_by, created_at, updated_at`
 
@@ -49,45 +36,36 @@ func scan(row interface{ Scan(...any) error }, t *Task) error {
 	return row.Scan(&t.ID, &t.ProjectID, &t.Title, &t.Status, &t.AssigneeID, &t.CreatedBy, &t.CreatedAt, &t.UpdatedAt)
 }
 
-// ListByProject returns one page of the project's tasks in id order, and whether
-// there are more.
-func (s *Store) ListByProject(ctx context.Context, projectID string, page pagination.Page) ([]Task, bool, error) {
-	start := time.Now()
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT `+columns+`
-		FROM tasks WHERE project_id = ? AND id > ? ORDER BY id LIMIT ?`,
-		projectID, page.StartingAfter, page.Limit+1)
-	metrics.RecordDBOperation("tasks.list", time.Since(start), err)
+// List is one page of the project's tasks in id order, and whether more follow.
+func (s *Store) List(ctx context.Context, projectID string, page plat5.Page) (list []Task, more bool, err error) {
+	defer telemetry.DB("tasks.list", time.Now(), &err)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+columns+` FROM tasks
+		WHERE project_id = ? AND id > ? ORDER BY id LIMIT ?`, projectID, page.StartingAfter, page.Limit+1)
 	if err != nil {
 		return nil, false, err
 	}
 	defer rows.Close()
-
-	out := make([]Task, 0)
+	list = []Task{}
 	for rows.Next() {
 		var t Task
 		if err := scan(rows, &t); err != nil {
 			return nil, false, err
 		}
-		out = append(out, t)
+		list = append(list, t)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
 	}
-	out, hasMore := pagination.Trim(out, page)
-	return out, hasMore, nil
+	list, more = plat5.Trim(list, page)
+	return list, more, nil
 }
 
-func (s *Store) FindInProject(ctx context.Context, projectID, taskID string) (*Task, error) {
-	start := time.Now()
-	row := s.db.QueryRowContext(ctx, `
-		SELECT `+columns+`
-		FROM tasks WHERE id = ? AND project_id = ?`,
-		taskID, projectID)
+// Find is the task with taskID in the project, or nil.
+func (s *Store) Find(ctx context.Context, projectID, taskID string) (_ *Task, err error) {
+	defer telemetry.DB("tasks.find", time.Now(), &err)
 	var t Task
-	err := scan(row, &t)
-	metrics.RecordDBOperation("tasks.find", time.Since(start), err)
-	if err == sql.ErrNoRows {
+	err = scan(s.db.QueryRowContext(ctx, `SELECT `+columns+` FROM tasks WHERE project_id = ? AND id = ?`, projectID, taskID), &t)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -96,55 +74,42 @@ func (s *Store) FindInProject(ctx context.Context, projectID, taskID string) (*T
 	return &t, nil
 }
 
-func (s *Store) Insert(ctx context.Context, t *Task) error {
-	start := time.Now()
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO tasks (`+columns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+func (s *Store) Insert(ctx context.Context, t *Task) (err error) {
+	defer telemetry.DB("tasks.insert", time.Now(), &err)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO tasks (`+columns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.ProjectID, t.Title, t.Status, t.AssigneeID, t.CreatedBy, t.CreatedAt, t.UpdatedAt)
-	metrics.RecordDBOperation("tasks.insert", time.Since(start), err)
 	return err
 }
 
-// Update writes t's fields to the task with its id in its project, and says whether
-// there was one: false when it's gone, such as deleted since it was read.
-func (s *Store) Update(ctx context.Context, t *Task) (bool, error) {
-	start := time.Now()
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE tasks SET title = ?, status = ?, assignee_id = ?, updated_at = ?
-		WHERE id = ? AND project_id = ?`,
-		t.Title, t.Status, t.AssigneeID, t.UpdatedAt, t.ID, t.ProjectID)
-	metrics.RecordDBOperation("tasks.update", time.Since(start), err)
-	return affected(res, err)
+// Update writes t's fields to its task in its project, and says whether there was one.
+func (s *Store) Update(ctx context.Context, t *Task) (_ bool, err error) {
+	defer telemetry.DB("tasks.update", time.Now(), &err)
+	res, err := s.db.ExecContext(ctx, `UPDATE tasks SET title = ?, status = ?, assignee_id = ?, updated_at = ?
+		WHERE project_id = ? AND id = ?`, t.Title, t.Status, t.AssigneeID, t.UpdatedAt, t.ProjectID, t.ID)
+	return changedRow(res, err)
 }
 
 // Delete deletes the task with taskID in the project, and says whether there was one.
-func (s *Store) Delete(ctx context.Context, projectID, taskID string) (bool, error) {
-	start := time.Now()
-	res, err := s.db.ExecContext(ctx, `
-		DELETE FROM tasks WHERE id = ? AND project_id = ?`,
-		taskID, projectID)
-	metrics.RecordDBOperation("tasks.delete", time.Since(start), err)
-	return affected(res, err)
+func (s *Store) Delete(ctx context.Context, projectID, taskID string) (_ bool, err error) {
+	defer telemetry.DB("tasks.delete", time.Now(), &err)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE project_id = ? AND id = ?`, projectID, taskID)
+	return changedRow(res, err)
 }
 
-// affected says whether a write changed a row.
-func affected(res sql.Result, err error) (bool, error) {
+// DeleteProject deletes every task of a project, for its purge, in db or a transaction.
+// Deleting none is fine, so it can run again.
+func DeleteProject(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, projectID string) (err error) {
+	defer telemetry.DB("tasks.delete_project", time.Now(), &err)
+	_, err = db.ExecContext(ctx, `DELETE FROM tasks WHERE project_id = ?`, projectID)
+	return err
+}
+
+func changedRow(res sql.Result, err error) (bool, error) {
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
-// DeleteByProject deletes every task of a project, for its purge. Deleting none
-// is fine, so it can run again for the same project.
-func (s *Store) DeleteByProject(ctx context.Context, projectID string) error {
-	start := time.Now()
-	_, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE project_id = ?`, projectID)
-	metrics.RecordDBOperation("tasks.delete_by_project", time.Since(start), err)
-	return err
+	return n > 0, err
 }

@@ -1,16 +1,20 @@
+// Package telemetry is the API's logs, traces and metrics, as plat5
+// docs/reference/telemetry.md has them: JSON lines on stdout, Prometheus /metrics always,
+// and OTLP over HTTP when a destination is set.
 package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/bridges/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -20,425 +24,227 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
-	"go.opentelemetry.io/otel/trace"
-	tracenoop "go.opentelemetry.io/otel/trace/noop"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
-
-// Version is the release this binary was built for, set at build time with
-// -ldflags "-X github.com/example/go-fiber-api/telemetry.Version=$VERSION".
-// A build without one reports dev.
-var Version = "dev"
 
 // serviceName is the default service.name and service.namespace.
 const serviceName = "api"
 
-// Telemetry bundles tracing, optional OTLP metrics bridge, and logging utilities.
-// Prometheus scrape (/metrics) lives in the metrics package and is always on.
-type Telemetry struct {
-	tracerProvider trace.TracerProvider
-	sdkProvider    *sdktrace.TracerProvider
-	meterProvider  *sdkmetric.MeterProvider
-	propagator     propagation.TextMapPropagator
-	logger         zerolog.Logger
+// NewLogger writes each record to w as one JSON line, with the field names Plat5's logs
+// use: timestamp, level (lowercase) and message.
+func NewLogger(w io.Writer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) > 0 {
+				return a
+			}
+			switch a.Key {
+			case slog.TimeKey:
+				a.Key, a.Value = "timestamp", slog.TimeValue(a.Value.Time().UTC())
+			case slog.MessageKey:
+				a.Key = "message"
+			case slog.LevelKey:
+				a.Value = slog.StringValue(strings.ToLower(a.Value.String()))
+			}
+			return a
+		},
+	}))
 }
 
-// Init configures OpenTelemetry per plat5 docs/reference/telemetry.md.
+// Setup installs OpenTelemetry's propagator (W3C trace context), and its tracer and meter
+// providers when OTLP is on: traces when a destination is set and OTEL_TRACES_EXPORTER
+// (unset is otlp) includes otlp, metrics likewise with OTEL_METRICS_EXPORTER. The
+// exporters read their destination and headers from the standard OTEL_EXPORTER_OTLP_*
+// variables. version is the build's, the default service.version.
 //
-// Defaults when an OTLP destination is set:
-//   - traces → OTLP on (unless OTEL_TRACES_EXPORTER excludes otlp)
-//   - metrics OTLP → on when dest exists (OTEL_METRICS_EXPORTER unset defaults to otlp)
-//   - /metrics scrape → always on (metrics package; independent of this Init)
-//
-// A telemetry variable that is set but invalid is an error naming it, whether or
-// not OTLP is on. A failed export is a JSON error line; the API keeps serving.
-func Init(ctx context.Context) (*Telemetry, error) {
-	zerolog.TimeFieldFormat = time.RFC3339Nano
-	zerolog.MessageFieldName = "message"
-	zerolog.LevelFieldName = "level"
-	zerolog.TimestampFieldName = "timestamp"
+// A telemetry variable that is set but invalid is an error naming it, OTLP on or off. Once
+// running, a failed export is a JSON error line, and the API keeps serving. shutdown
+// flushes what's pending.
+func Setup(ctx context.Context, version string) (shutdown func(context.Context) error, err error) {
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		slog.Error("telemetry error", "error_message", err.Error())
+	}))
 
-	baseLogger := zerolog.New(os.Stdout).
-		With().
-		Timestamp().
-		Logger()
-
-	propagator := propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-	)
-	otel.SetTextMapPropagator(propagator)
-	otel.SetErrorHandler(ErrorHandler(baseLogger))
-
-	t := &Telemetry{
-		propagator: propagator,
-		logger:     baseLogger,
+	s, err := readSettings()
+	if err != nil {
+		return nil, err
 	}
-
-	settings, err := parseSettings()
+	res, err := newResource(ctx, version)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := buildResource(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	tracesDest, metricsDest := settings.tracesDest, settings.metricsDest
-	enableTraces := !settings.sdkDisabled && tracesDest != nil && exporterIncludesOTLP(settings.tracesExporters, true)
-	enableMetricsOTLP := !settings.sdkDisabled && metricsDest != nil && exporterIncludesOTLP(settings.metricsExporters, true)
-
-	if !enableTraces && !enableMetricsOTLP {
-		tp := tracenoop.NewTracerProvider()
-		otel.SetTracerProvider(tp)
-		t.tracerProvider = tp
-		return t, nil
-	}
-
-	if enableTraces {
-		clientOpts := []otlptracehttp.Option{
-			otlptracehttp.WithEndpoint(tracesDest.host),
-			otlptracehttp.WithURLPath(tracesDest.path),
+	var shutdowns []func(context.Context) error
+	shutdown = func(ctx context.Context) error {
+		var errs []error
+		for _, f := range shutdowns {
+			errs = append(errs, f(ctx))
 		}
-		if tracesDest.insecure {
-			clientOpts = append(clientOpts, otlptracehttp.WithInsecure())
-		}
-		exporter, err := otlptracehttp.New(ctx, clientOpts...)
+		return errors.Join(errs...)
+	}
+	if s.traces {
+		exporter, err := otlptracehttp.New(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+			return nil, fmt.Errorf("trace exporter: %w", err)
 		}
 		tp := sdktrace.NewTracerProvider(
-			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(settings.samplerRatio))),
+			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(s.samplerRatio))),
 			sdktrace.WithBatcher(exporter),
 			sdktrace.WithResource(res),
 		)
 		otel.SetTracerProvider(tp)
-		t.tracerProvider = tp
-		t.sdkProvider = tp
-	} else {
-		tp := tracenoop.NewTracerProvider()
-		otel.SetTracerProvider(tp)
-		t.tracerProvider = tp
+		shutdowns = append(shutdowns, tp.Shutdown)
 	}
-
-	if enableMetricsOTLP {
-		metricOpts := []otlpmetrichttp.Option{
-			otlpmetrichttp.WithEndpoint(metricsDest.host),
-			otlpmetrichttp.WithURLPath(metricsDest.path),
-		}
-		if metricsDest.insecure {
-			metricOpts = append(metricOpts, otlpmetrichttp.WithInsecure())
-		}
-		metricExporter, err := otlpmetrichttp.New(ctx, metricOpts...)
+	if s.metrics {
+		exporter, err := otlpmetrichttp.New(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create metric exporter: %w", err)
+			return nil, fmt.Errorf("metric exporter: %w", err)
 		}
-		reader := sdkmetric.NewPeriodicReader(metricExporter,
-			sdkmetric.WithProducer(prometheus.NewMetricProducer()),
-			sdkmetric.WithInterval(settings.metricExportInterval),
-		)
+		// The series /metrics serves, pushed: the Prometheus registry is the one source.
+		// The reader takes its interval from OTEL_METRIC_EXPORT_INTERVAL.
 		mp := sdkmetric.NewMeterProvider(
 			sdkmetric.WithResource(res),
-			sdkmetric.WithReader(reader),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter,
+				sdkmetric.WithProducer(prometheus.NewMetricProducer()))),
 		)
 		otel.SetMeterProvider(mp)
-		t.meterProvider = mp
+		shutdowns = append(shutdowns, mp.Shutdown)
 	}
-
-	return t, nil
+	return shutdown, nil
 }
 
-// buildResource layers the resource: the service's defaults (the compiled
-// Version among them), then OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME,
-// then the convenience variables that are set.
-func buildResource(ctx context.Context) (*resource.Resource, error) {
+// newResource layers the resource: the service's defaults (version among them), then
+// OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME, then the convenience variables that are
+// set.
+func newResource(ctx context.Context, version string) (*resource.Resource, error) {
+	const deploymentEnvironment = attribute.Key("deployment.environment")
 	defaults := []attribute.KeyValue{
-		semconv.ServiceNameKey.String(serviceName),
-		semconv.ServiceNamespaceKey.String(serviceName),
-		semconv.ServiceInstanceIDKey.String(getEnv("HOSTNAME", serviceName+"-local")),
-		semconv.ServiceVersionKey.String(Version),
-		semconv.DeploymentEnvironmentKey.String("development"),
+		semconv.ServiceName(serviceName),
+		semconv.ServiceNamespace(serviceName),
+		semconv.ServiceInstanceID(env("HOSTNAME", serviceName+"-local")),
+		semconv.ServiceVersion(version),
+		deploymentEnvironment.String("development"),
 	}
 	var overrides []attribute.KeyValue
-	for _, o := range []struct {
-		key  attribute.Key
-		vars []string
-	}{
-		{semconv.ServiceNamespaceKey, []string{"OTEL_SERVICE_NAMESPACE"}},
-		{semconv.ServiceVersionKey, []string{"OTEL_SERVICE_VERSION"}},
-		{semconv.ServiceInstanceIDKey, []string{"OTEL_SERVICE_INSTANCE_ID"}},
-		{semconv.DeploymentEnvironmentKey, []string{"OTEL_DEPLOYMENT_ENV", "DEPLOYMENT_ENV"}},
+	for key, vars := range map[attribute.Key][]string{
+		semconv.ServiceNamespaceKey:  {"OTEL_SERVICE_NAMESPACE"},
+		semconv.ServiceVersionKey:    {"OTEL_SERVICE_VERSION"},
+		semconv.ServiceInstanceIDKey: {"OTEL_SERVICE_INSTANCE_ID"},
+		deploymentEnvironment:        {"OTEL_DEPLOYMENT_ENV", "DEPLOYMENT_ENV"},
 	} {
-		for _, v := range o.vars {
-			if value := getEnv(v, ""); value != "" {
-				overrides = append(overrides, o.key.String(value))
+		for _, v := range vars {
+			if value := env(v, ""); value != "" {
+				overrides = append(overrides, key.String(value))
 				break
 			}
 		}
 	}
-
-	res, err := resource.New(ctx,
+	return resource.New(ctx,
 		resource.WithAttributes(defaults...),
 		resource.WithFromEnv(),
-		resource.WithProcess(),
 		resource.WithTelemetrySDK(),
 		resource.WithAttributes(overrides...),
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build resource: %w", err)
-	}
-	return res, nil
 }
 
-// ErrorHandler logs an OpenTelemetry error (a failed export, say) as one JSON
-// line. The service keeps running.
-func ErrorHandler(logger zerolog.Logger) otel.ErrorHandler {
-	return otel.ErrorHandlerFunc(func(err error) {
-		logger.Error().Str("error_message", err.Error()).Msg("telemetry error")
-	})
-}
-
-// Shutdown flushes exporters when OTLP is enabled.
-func (t *Telemetry) Shutdown(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	var firstErr error
-	if t.meterProvider != nil {
-		if err := t.meterProvider.Shutdown(ctx); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if t.sdkProvider != nil {
-		if err := t.sdkProvider.Shutdown(ctx); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-// TracerProvider returns the underlying provider.
-func (t *Telemetry) TracerProvider() trace.TracerProvider {
-	return t.tracerProvider
-}
-
-// Propagator returns the configured propagator.
-func (t *Telemetry) Propagator() propagation.TextMapPropagator {
-	return t.propagator
-}
-
-// Logger returns the base zerolog logger.
-func (t *Telemetry) Logger() zerolog.Logger {
-	return t.logger
-}
-
-// LoggerWithContext enriches the logger with trace/span IDs if available.
-func (t *Telemetry) LoggerWithContext(ctx context.Context) zerolog.Logger {
-	spanContext := trace.SpanContextFromContext(ctx)
-	if !spanContext.IsValid() {
-		return t.logger
-	}
-	return t.logger.With().
-		Str("trace_id", spanContext.TraceID().String()).
-		Str("span_id", spanContext.SpanID().String()).
-		Logger()
-}
-
-// settings are the telemetry variables, parsed strictly: a variable that is
-// set but invalid is an error naming it (plat5 docs/reference/telemetry.md, Invalid values).
+// settings are what the telemetry variables decide.
 type settings struct {
-	sdkDisabled          bool
-	tracesExporters      []string
-	metricsExporters     []string
-	tracesDest           *otlpDest
-	metricsDest          *otlpDest
-	samplerRatio         float64
-	metricExportInterval time.Duration
+	traces, metrics bool
+	samplerRatio    float64
 }
 
-func parseSettings() (settings, error) {
-	var s settings
-	var err error
-	if s.sdkDisabled, err = envBool("OTEL_SDK_DISABLED"); err != nil {
+// readSettings reads the telemetry variables strictly: one set but invalid is an error
+// naming it (plat5 docs/reference/telemetry.md#invalid-values). Empty is unset.
+func readSettings() (s settings, err error) {
+	disabled, err := oneOf("OTEL_SDK_DISABLED", "false", "true", "false")
+	if err != nil {
 		return s, err
 	}
-	if err = checkProtocol(); err != nil {
+	for _, key := range []string{"OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"} {
+		if _, err := oneOf(key, "http/protobuf", "http/protobuf"); err != nil {
+			return s, err
+		}
+	}
+	tracesTo, err := exporters("OTEL_TRACES_EXPORTER", "otlp", "none")
+	if err != nil {
 		return s, err
 	}
-	if s.tracesExporters, err = envExporterList("OTEL_TRACES_EXPORTER", "otlp", "none"); err != nil {
+	metricsTo, err := exporters("OTEL_METRICS_EXPORTER", "otlp", "prometheus", "none")
+	if err != nil {
 		return s, err
 	}
-	if s.metricsExporters, err = envExporterList("OTEL_METRICS_EXPORTER", "otlp", "prometheus", "none"); err != nil {
-		return s, err
+	var base, tracesURL, metricsURL bool
+	for key, set := range map[string]*bool{
+		"OTEL_EXPORTER_OTLP_ENDPOINT":         &base,
+		"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":  &tracesURL,
+		"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": &metricsURL,
+	} {
+		if *set, err = endpoint(key); err != nil {
+			return s, err
+		}
 	}
-	if s.samplerRatio, err = samplerRatio(); err != nil {
-		return s, err
+	s.samplerRatio = 1
+	if v := env("OTEL_TRACES_SAMPLER_RATIO", ""); v != "" {
+		if s.samplerRatio, err = strconv.ParseFloat(v, 64); err != nil || s.samplerRatio < 0 || s.samplerRatio > 1 {
+			return s, fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO is %q: want a number from 0 to 1", v)
+		}
 	}
-	if s.metricExportInterval, err = metricExportInterval(); err != nil {
-		return s, err
+	if v := env("OTEL_METRIC_EXPORT_INTERVAL", ""); v != "" {
+		if ms, err := strconv.Atoi(v); err != nil || ms <= 0 {
+			return s, fmt.Errorf("OTEL_METRIC_EXPORT_INTERVAL is %q: want a positive number of milliseconds", v)
+		}
 	}
-	if err = checkResourceAttributes(); err != nil {
-		return s, err
+	if v := env("OTEL_RESOURCE_ATTRIBUTES", ""); v != "" {
+		for entry := range strings.SplitSeq(v, ",") {
+			if key, _, ok := strings.Cut(entry, "="); !ok || strings.TrimSpace(key) == "" {
+				return s, fmt.Errorf("OTEL_RESOURCE_ATTRIBUTES is %q: want key=value entries, comma-separated", v)
+			}
+		}
 	}
-	if _, err = parseEndpoint("OTEL_EXPORTER_OTLP_ENDPOINT"); err != nil {
-		return s, err
-	}
-	if s.tracesDest, err = resolveOTLPEndpoint("traces", "/v1/traces"); err != nil {
-		return s, err
-	}
-	if s.metricsDest, err = resolveOTLPEndpoint("metrics", "/v1/metrics"); err != nil {
-		return s, err
-	}
+	on := disabled == "false"
+	s.traces = on && (base || tracesURL) && slices.Contains(tracesTo, "otlp")
+	s.metrics = on && (base || metricsURL) && slices.Contains(metricsTo, "otlp")
 	return s, nil
 }
 
-type otlpDest struct {
-	host     string
-	path     string
-	insecure bool
-}
-
-// parseEndpoint is an OTLP endpoint variable: nil when unset, else an http:// or https:// URL.
-func parseEndpoint(key string) (*url.URL, error) {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return nil, nil
-	}
-	u, err := url.Parse(v)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("%s is %q: want an http:// or https:// URL", key, v)
-	}
-	return u, nil
-}
-
-// resolveOTLPEndpoint resolves OTEL_EXPORTER_OTLP_{SIGNAL}_ENDPOINT, else the base
-// OTEL_EXPORTER_OTLP_ENDPOINT plus the signal's path. Does not apply SDK_DISABLED or
-// exporter lists: callers gate those.
-func resolveOTLPEndpoint(signal, defaultPath string) (*otlpDest, error) {
-	u, err := parseEndpoint("OTEL_EXPORTER_OTLP_" + strings.ToUpper(signal) + "_ENDPOINT")
-	if err != nil {
-		return nil, err
-	}
-	path := ""
-	if u != nil {
-		// A per-signal URL without a path gets the signal's.
-		path = u.Path
-	} else {
-		if u, err = parseEndpoint("OTEL_EXPORTER_OTLP_ENDPOINT"); err != nil || u == nil {
-			return nil, err
-		}
-		path = strings.TrimSuffix(u.Path, "/") + defaultPath
-	}
-	if path == "" || path == "/" {
-		path = defaultPath
-	}
-	return &otlpDest{
-		host:     u.Host,
-		path:     path,
-		insecure: u.Scheme != "https",
-	}, nil
-}
-
-// envExporterList parses a comma-separated OTEL_*_EXPORTER value.
-// Returns nil when unset (caller applies defaults); a value outside allowed is an error.
-func envExporterList(key string, allowed ...string) ([]string, error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return nil, nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p == "" {
-			continue
-		}
-		if !slices.Contains(allowed, p) {
-			return nil, fmt.Errorf("%s is %q: want a comma-separated list of %s", key, raw, strings.Join(allowed, ", "))
-		}
-		out = append(out, p)
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
-}
-
-// exporterIncludesOTLP reports whether OTLP export is allowed.
-// defaultWhenUnset: traces and metrics default true (otlp when dest exists).
-func exporterIncludesOTLP(list []string, defaultWhenUnset bool) bool {
-	if list == nil {
-		return defaultWhenUnset
-	}
-	return slices.Contains(list, "otlp")
-}
-
-// envBool is a boolean OTEL_* variable: unset or empty is false, else true or false.
-func envBool(key string) (bool, error) {
-	switch v := strings.ToLower(strings.TrimSpace(os.Getenv(key))); v {
-	case "", "false":
-		return false, nil
-	case "true":
-		return true, nil
-	default:
-		return false, fmt.Errorf("%s is %q: want true or false", key, os.Getenv(key))
-	}
-}
-
-// checkProtocol refuses any OTLP protocol but http/protobuf, the one the exporters speak.
-func checkProtocol() error {
-	for _, key := range []string{"OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"} {
-		if v := strings.TrimSpace(os.Getenv(key)); v != "" && v != "http/protobuf" {
-			return fmt.Errorf("%s is %q: only http/protobuf is supported", key, v)
-		}
-	}
-	return nil
-}
-
-// checkResourceAttributes refuses OTEL_RESOURCE_ATTRIBUTES unless every entry is key=value.
-func checkResourceAttributes() error {
-	raw := strings.TrimSpace(os.Getenv("OTEL_RESOURCE_ATTRIBUTES"))
-	if raw == "" {
-		return nil
-	}
-	for _, entry := range strings.Split(raw, ",") {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok || strings.TrimSpace(key) == "" {
-			return fmt.Errorf("OTEL_RESOURCE_ATTRIBUTES is %q: want key=value entries, comma-separated", raw)
-		}
-	}
-	return nil
-}
-
-func getEnv(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return value
+// env is the variable key, trimmed, or fallback when that's empty.
+func env(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
 	}
 	return fallback
 }
 
-// samplerRatio is OTEL_TRACES_SAMPLER_RATIO: unset is 1, else a number from 0 to 1.
-func samplerRatio() (float64, error) {
-	v := strings.TrimSpace(os.Getenv("OTEL_TRACES_SAMPLER_RATIO"))
-	if v == "" {
-		return 1, nil
+// oneOf is key, lowercased, if it's one of allowed; fallback when unset.
+func oneOf(key, fallback string, allowed ...string) (string, error) {
+	v := strings.ToLower(env(key, fallback))
+	if !slices.Contains(allowed, v) {
+		return "", fmt.Errorf("%s is %q: want %s", key, os.Getenv(key), strings.Join(allowed, " or "))
 	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil || f < 0 || f > 1 {
-		return 0, fmt.Errorf("OTEL_TRACES_SAMPLER_RATIO is %q: want a number from 0 to 1", v)
-	}
-	return f, nil
+	return v, nil
 }
 
-// metricExportInterval is OTEL_METRIC_EXPORT_INTERVAL, milliseconds per the OTEL env spec:
-// unset is 60000, else a positive whole number.
-func metricExportInterval() (time.Duration, error) {
-	v := strings.TrimSpace(os.Getenv("OTEL_METRIC_EXPORT_INTERVAL"))
+// exporters is a comma-separated OTEL_*_EXPORTER list of allowed names; unset is otlp.
+func exporters(key string, allowed ...string) ([]string, error) {
+	var out []string
+	for name := range strings.SplitSeq(strings.ToLower(env(key, "otlp")), ",") {
+		if name = strings.TrimSpace(name); !slices.Contains(allowed, name) {
+			return nil, fmt.Errorf("%s is %q: want a comma-separated list of %s", key, os.Getenv(key), strings.Join(allowed, ", "))
+		}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+// endpoint says whether the OTLP endpoint key is set, to an http:// or https:// URL.
+func endpoint(key string) (bool, error) {
+	v := env(key, "")
 	if v == "" {
-		return 60 * time.Second, nil
+		return false, nil
 	}
-	ms, err := strconv.Atoi(v)
-	if err != nil || ms <= 0 {
-		return 0, fmt.Errorf("OTEL_METRIC_EXPORT_INTERVAL is %q: want a positive number of milliseconds", v)
+	if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false, fmt.Errorf("%s is %q: want an http:// or https:// URL", key, v)
 	}
-	return time.Duration(ms) * time.Millisecond, nil
+	return true, nil
 }

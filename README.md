@@ -1,8 +1,24 @@
 # Go + Fiber API starter
 
-A Plat5 API starter: **Go** + **Fiber v3**, SQLite (`modernc.org/sqlite`), Prometheus + OTel. It serves tasks inside a project, and the person's own profile. The repo is a Plat5 project you can run as is: `plat5 start` in this directory runs Plat5, applies `plat5.yml`, and runs the API beside it.
+A Plat5 API starter: **Go** + **Fiber v3**, SQLite, Prometheus and OpenTelemetry. It serves tasks inside a project, and the person's own profile. The repo is a Plat5 project you can run as is: `plat5 start` in this directory runs Plat5, applies `plat5.yml`, and runs the API beside it.
 
 Plat5 decides who may call what, at its gateway. This service owns business logic only: it reads the node ids and the caller's member id the front door gives it, and checks nothing about the caller ([plat5 `docs/guides/write-a-service.md`](https://github.com/plat5dev/plat5/blob/master/docs/guides/write-a-service.md)).
+
+## Stack
+
+| Piece | Choice |
+|-------|--------|
+| Go | 1.27 (`go.mod`'s toolchain is go1.27.3; the Dockerfile and CI follow it) |
+| HTTP | Fiber v3 (`github.com/gofiber/fiber/v3`): its router, error handler, `recover` middleware and `app.Test` in the tests |
+| Bodies | `encoding/json/v2`: keys matched exactly, into `plat5.Field`s, which tell an absent value from `null` from the wrong type (`plat5/body.go`) |
+| DB | SQLite via `modernc.org/sqlite` (pure Go, no cgo) on `database/sql`; the schema is created at boot (`db/`) |
+| Errors | `plat5.Error`, answered in [the envelope](https://github.com/plat5dev/plat5/blob/master/docs/reference/errors.md) by `plat5.ErrorHandler`, Fiber's error handler |
+| Logs | `log/slog`'s JSON handler, with Plat5's field names (`telemetry.NewLogger`) |
+| Traces | OpenTelemetry's SDK and OTLP/HTTP exporter; HTTP server spans from Fiber's otel middleware (`github.com/gofiber/contrib/v3/otel`) |
+| Metrics | `prometheus/client_golang` on its default registry, process series included, served at `/metrics`; the same series pushed by OpenTelemetry's Prometheus bridge |
+| IDs | ULID, lowercase (`github.com/oklog/ulid/v2`) |
+| Tests | `go test`, the API through `app.Test`, identity faked by `httptest` servers |
+| Dev | `air` (hot reload) in the compose file's `local` target |
 
 ## What it serves
 
@@ -27,7 +43,16 @@ A task is authored: `created_by` is the member id of whoever created it, and sta
 
 Ids are lowercase ULIDs with no prefix, like every Plat5 id.
 
-Request bodies match keys exactly; an unknown field is a **422** naming it. `{"Title": …}` isn't `title`: each unknown field is in `details.fields` once, in the body's order, as `{"path": "Title", "message": "Title isn't a field."}`, and the first one's sentence is the `message`. A nested field's path is `address.street`, an array item's `tags[0].name`. A body with an unknown field is refused before its values are checked.
+A write's body is JSON: not sent as `application/json` (with any parameters), empty, or not JSON is a **400** `INVALID_REQUEST`, as is a create without `X-Plat5-Member-Id`, before its body is read ([plat5 `docs/reference/errors.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/errors.md#which-status)). JSON that isn't an object (an array, a string, `null`) is a **422** at `body`. Keys match exactly: `{"Title": …}` isn't `title`, and a body with an unknown key is refused for it before its values are checked, `{"path": "Title", "message": "Title isn't a field."}`; the decoder stops at the first unknown key, so only that one is named. Then each wrong value is in the **422**'s `details.fields`, at its path, with its sentence, and the first one's sentence is the `message`:
+
+| Field | Create | Update | Wrong |
+|-------|--------|--------|-------|
+| `title` | Required: absent, or empty once trimmed, is `Title is required.` | Absent or `null` leaves it | Trimmed of white space; over 255 characters is `Title is too long.`; `null` on a create, or not a string, is `That doesn't look right.` |
+| `status` | Absent is `todo` | Absent or `null` leaves it | Anything but `todo`, `in_progress` or `done`, `null` on a create included, is `Status must be todo, in progress, or done.` |
+| `assignee_id` | Absent or `null` is none | Absent leaves it, `null` unassigns | Not a lowercase ULID or `null`: `That doesn't look right.` ([Checking an assignee](#checking-an-assignee)) |
+| `bio` | `PUT`: required, `Bio is required.` | | Kept as sent (not trimmed, `""` is a bio); over 2000 characters is `Bio is too long.`; `null` or not a string, `That doesn't look right.` |
+
+Characters are code points. A value is never coerced: `5` isn't a string. Times are RFC 3339 in UTC, to the millisecond (`2026-10-28T00:00:00.100Z`). An unknown route, or a known path in a method it doesn't serve, is the **404** `NOT_FOUND` envelope; `HEAD` on a `GET` route answers as the `GET` does, without a body.
 
 ## The config
 
@@ -55,13 +80,13 @@ Only front doors may reach the API: Plat5's gateway, an operator plane, anything
 | `X-Request-ID` | The front door | Every request: logged, and in error bodies. Never set on a response |
 | `traceparent` | The front door | Every request: the server span's parent |
 
-The gateway also sends `X-Plat5-Project-Id`, `X-Plat5-Organization-Id` and `X-Plat5-User-Id`; the API reads the project's and the user's ids from the path, and has no use for the organization's. It never sees `Authorization`, a slug, a principal id, or the caller's permissions or role ([plat5 `docs/reference/headers.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/headers.md)).
+The gateway also sends `X-Plat5-Project-Id`, `X-Plat5-Organization-Id` and `X-Plat5-User-Id`; the API reads the project's and the user's ids from the path, logs the project's and the user's from their headers, and has no use for the organization's. A body's size is the gateway's to limit (`max_body_bytes`): the API sets none of its own. It never sees `Authorization`, a slug, a principal id, or the caller's permissions or role ([plat5 `docs/reference/headers.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/headers.md)).
 
 Every lookup is scoped by the project id in the path, and nothing checks that the project exists or that the caller may act: the front door decided. A task id under another project is **404**.
 
 ## Checking an assignee
 
-The caller may assign: the gateway let them write. The assignee isn't the caller, so the gateway decided nothing about them, and the API asks identity before writing a body that sets one ([plat5 `docs/guides/write-a-service.md`](https://github.com/plat5dev/plat5/blob/master/docs/guides/write-a-service.md#checking-access-outside-a-request)), in `access/`:
+The caller may assign: the gateway let them write. The assignee isn't the caller, so the gateway decided nothing about them, and the API asks identity before writing a body that sets one ([plat5 `docs/guides/write-a-service.md`](https://github.com/plat5dev/plat5/blob/master/docs/guides/write-a-service.md#checking-access-outside-a-request)), from `access/`:
 
 ```
 POST {IDENTITY_INTERNAL_URL}/access/v1/evaluation
@@ -80,7 +105,7 @@ It sends the request's `traceparent` and `X-Request-ID`. After the body (**422**
 
 `null` unassigns and an absent `assignee_id` leaves the task's as it is; neither asks. Anything but a lowercase ULID or `null` is **422** at `assignee_id`.
 
-`TASK_ASSIGNEE_PERMISSION` names the permission, and the API won't start without it. The name is the deployment's, not the code's: the starter's is `project:read`, the permission `services/api.yml` requires to read a project's tasks, so an assignee is someone who can see them. A deployment that renames that permission sets this too; otherwise identity answers `false` for everyone and every assignee is refused. The resource is the `project` kind, its id from the path, both following `plat5.yml`'s kinds.
+The assignee is checked in `tasks/handler.go`, with `access/`. `TASK_ASSIGNEE_PERMISSION` names the permission, and the API won't start without it. The name is the deployment's, not the code's: the starter's is `project:read`, the permission `services/api.yml` requires to read a project's tasks, so an assignee is someone who can see them. A deployment that renames that permission sets this too; otherwise identity answers `false` for everyone and every assignee is refused. The resource is the `project` kind, its id from the path, both following `plat5.yml`'s kinds.
 
 ## Following the lifecycle
 
@@ -109,17 +134,17 @@ It logs `following the lifecycle log from its first event`, then each page it re
 
 ## Lists
 
-The task list pages like every Plat5 list ([plat5 `docs/reference/lists.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/lists.md)). `pagination/` reads the params.
+The task list pages like every Plat5 list ([plat5 `docs/reference/lists.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/lists.md)). `plat5/lists.go` reads the params; when both are wrong, both are named.
 
 | | |
 |---|---|
-| `limit` | Default 50, max 100. Over the max is clamped. Under 1 or not a number → **422** |
+| `limit` | Default 50, max 100. Over the max is clamped. Under 1 or not a whole number → **422** |
 | `starting_after` | The `id` of the last item on the previous page. Not a lowercase ULID → **422** |
 | Answer | `{"tasks": [...], "has_more": false}`, in `id` order (oldest first) |
 
 ## Audit details
 
-The gateway records each write before it reaches this service. Each write says what it changed on `X-Plat5-Audit-Details`, and a create names its new id on `X-Plat5-Audit-Created` ([plat5 `docs/concepts/audit.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/audit.md#what-a-service-adds)). The gateway stores them with the event and strips them before the client sees the response. `audit/` builds and encodes them.
+The gateway records each write before it reaches this service. Each write says what it changed on `X-Plat5-Audit-Details`, and a create names its new id on `X-Plat5-Audit-Created` ([plat5 `docs/concepts/audit.md`](https://github.com/plat5dev/plat5/blob/master/docs/concepts/audit.md#what-a-service-adds)). The gateway stores them with the event and strips them before the client sees the response. `plat5/audit.go` builds and encodes them: one JSON object, keys sorted, everything but visible ASCII escaped.
 
 | Write | Details |
 |-------|---------|
@@ -166,7 +191,7 @@ TASK_ASSIGNEE_PERMISSION=project:read go run .
 
 A `GET …/stats` for a project, end to end.
 
-**1. Add the handler.** A package `stats/` with a handler on `/projects/:project_id/stats`, registered in `main.go` beside the task routes (copy `tasks/`). Read `c.Params("project_id")`. Don't check who called: the front door did, and the path is the answer.
+**1. Add the handler.** A package `stats/` with a handler on `/projects/:project_id/stats`, registered in `newApp` in `main.go` beside the task routes (copy `tasks/`). Read `c.Params("project_id")`. Don't check who called: the front door did, and the path is the answer. Return the errors in `plat5/errors.go` (`plat5.NotFound`, `plat5.Invalid`, `plat5.DB`…); a body is `plat5.ReadBody` into a struct of `plat5.Field`s, a list's params `plat5.ReadPage`.
 
 **2. Route it.** Add it to `services/api.yml`, in the `project` scope. The path is relative to the project; `upstream_prefix` makes its upstream `/projects/{project.id}/stats`:
 
@@ -190,7 +215,7 @@ A `GET …/stats` for a project, end to end.
 
 ```bash
 TASK_ASSIGNEE_PERMISSION=project:read go run .  # start
-go test ./...                                   # unit tests
+go test ./...                                   # the tests
 go vet ./...
 air -c .air.toml                                # hot reload (optional)
 ```
@@ -238,9 +263,9 @@ Contract: Plat5 [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat
 
 | Signal | Path |
 |--------|------|
-| Logs | JSON stdout (zerolog); access line per request, with `request_id`, and `node_id` and `member_id` on task routes or `user_id` on the profile ([logs](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#logs)) |
+| Logs | JSON stdout (`log/slog`): one `request completed` line per request, `info`, `warn` on a 4xx, `error` on a 5xx with `error_type` (`internal`, `db`, `network`) and `error_message`; with `route` (the template, or `unknown`), `request_id`, `trace_id`, and `node_id`, `member_id` and `user_id` from `X-Plat5-Project-Id`, `X-Plat5-Member-Id` and `X-Plat5-User-Id` ([logs](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#logs)) |
 | Metrics scrape | Prometheus `/metrics` on `INTERNAL_PORT` |
-| Traces | OTLP HTTP when endpoint set (default); W3C Trace Context only, `traceparent` in and on to identity; HTTP server spans as [the contract](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#http-server-spans) has them, `middleware/redact.go` redacting `url.query`; the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
+| Traces | OTLP HTTP when endpoint set (default); W3C Trace Context, `traceparent` in, and on to identity; HTTP server spans from Fiber's otel middleware, as [the contract](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#http-server-spans) has them: `{method} {route}`, `{method}` alone when no route matched, `url.query` redacted, `Error` on a 5xx with the log's `error_type` as `error.type`, never on a 4xx; `request_id` and the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
 | Metrics OTLP | On when endpoint set (default); set `OTEL_METRICS_EXPORTER=prometheus` to opt out |
 
 ```bash
@@ -255,23 +280,19 @@ Under `plat5 start`, the compose file gets `OTEL_EXPORTER_OTLP_ENDPOINT` from th
 
 An export that fails, the collector unreachable say, is an `error` line, `telemetry error` with the cause in `error_message`, each time it fails; the API keeps serving ([invalid values](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#invalid-values)).
 
-Health and `/metrics` are on the internal app (not OTel-instrumented).
+Health and `/metrics` are on the internal app, which isn't traced. `telemetry/` is all of it: `telemetry.go` reads the variables and sets up the SDK, `metrics.go` the series, `http.go` the request middleware.
 
 ## Layout
 
 ```
-main.go              # dual listen: public + internal; starts the lifecycle reader
+main.go              # config, the public app's routes (newApp), the internal app, the lifecycle reader
+*_test.go            # the HTTP contract, against newApp
+plat5/               # errors and their envelope, request bodies, list params, ids and times, audit details
 db/                  # SQLite open + schema
-errors/              # Plat5 error envelope
-jsonbody/            # a JSON request body, keys matched exactly, or a 422
-audit/               # X-Plat5-Audit-Details / -Created
-pagination/          # limit, starting_after, has_more
-lifecycle/           # identity's lifecycle log: purged projects, deleted accounts
+tasks/ profiles/     # the API: handler + store each
 access/              # identity's access evaluation: assignees
-metrics/             # Prometheus SoT
-middleware/          # request logger, url.query redaction
-telemetry/           # OTel init (exporter matrix)
-profiles/ tasks/     # the API
+lifecycle/           # identity's lifecycle log: purged projects, deleted accounts
+telemetry/           # logs, OTel setup (the OTEL_* variables), Prometheus series, the request middleware
 plat5.yml services/  # the deployment's config
 plat5.dev.yml        # plat5 start
 routes.operator.yml  # the operator plane's routes on this API
@@ -285,6 +306,5 @@ docker compose up --build
 docker build --target prod --build-arg VERSION=v1.2.3 -t api .   # service.version v1.2.3; dev without VERSION
 ```
 
-## Gold standard
-
-Clone this starter (or copy packages) when starting a new Go Plat5 service. Keep telemetry gating in-tree — do not publish a shared telemetry library across products.
+- `local` target: hot reload with `air`, source mounted
+- `prod` target: a static binary (`CGO_ENABLED=0`) on `debian:trixie-slim`, non-root

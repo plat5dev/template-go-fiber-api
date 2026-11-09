@@ -1,10 +1,10 @@
 # ======================================================================
 # Local Stage for development
-FROM golang:1.25-bookworm AS local
+FROM golang:1.27-trixie AS local
 
 WORKDIR /app
 
-RUN GOTOOLCHAIN=auto go install github.com/air-verse/air@v1.62.0
+RUN go install github.com/air-verse/air@v1.67.4
 # sqlite3, to look in the database or reset the lifecycle cursor (README).
 RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 \
     && rm -rf /var/lib/apt/lists/*
@@ -22,7 +22,7 @@ CMD ["air", "-c", ".air.toml"]
 
 # ======================================================================
 # Builder Stage
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.27-trixie AS builder
 
 WORKDIR /app
 
@@ -36,12 +36,12 @@ COPY . .
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-X github.com/example/go-fiber-api/telemetry.Version=${VERSION}" \
+    -ldflags "-X main.version=${VERSION}" \
     -o server ./
 
 # ======================================================================
 # Prod Stage
-FROM debian:bookworm-slim AS prod
+FROM debian:trixie-slim AS prod
 
 WORKDIR /app
 

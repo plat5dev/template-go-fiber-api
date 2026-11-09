@@ -3,7 +3,7 @@
 //
 // Each question is one evaluation on identity's internal port (plat5
 // docs/reference/api/internal.md#access-evaluation). Only a 200 with a boolean decision is
-// an answer. Anything else is an error, logged with the request id, and no answer is no.
+// an answer. Anything else is an error, logged with the request id: no answer is no.
 package access
 
 import (
@@ -12,29 +12,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 )
 
+// Client asks identity at its internal base URL. With no URL, every question fails: there's
+// no one to ask.
 type Client struct {
-	url        string
-	client     *http.Client
-	propagator propagation.TextMapPropagator
-	logger     zerolog.Logger
+	url  string
+	http *http.Client
 }
 
-// New asks identity at identityURL, its internal base URL. With identityURL empty, every
-// question fails: there's no one to ask.
-func New(identityURL string, propagator propagation.TextMapPropagator, logger zerolog.Logger) *Client {
-	return &Client{
-		url:        identityURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
-		propagator: propagator,
-		logger:     logger.With().Str("component", "access").Logger(),
-	}
+// New asks identity at identityURL.
+func New(identityURL string) *Client {
+	return &Client{url: identityURL, http: &http.Client{Timeout: 10 * time.Second}}
 }
 
 type entity struct {
@@ -42,26 +37,22 @@ type entity struct {
 	ID   string `json:"id"`
 }
 
-type action struct {
-	Name string `json:"name"`
-}
-
 type evaluation struct {
 	Subject  entity `json:"subject"`
 	Resource entity `json:"resource"`
-	Action   action `json:"action"`
+	Action   struct {
+		Name string `json:"name"`
+	} `json:"action"`
 }
 
 // Evaluate asks whether memberID holds permission on the node nodeID, whose kind is kind.
-// requestID is the request's X-Request-ID: sent to identity, and logged with a failure.
+// It sends requestID as X-Request-ID, and ctx's trace as traceparent.
 func (c *Client) Evaluate(ctx context.Context, requestID, memberID, kind, nodeID, permission string) (bool, error) {
-	decision, err := c.evaluate(ctx, requestID, evaluation{
-		Subject:  entity{Type: "member", ID: memberID},
-		Resource: entity{Type: kind, ID: nodeID},
-		Action:   action{Name: permission},
-	})
+	e := evaluation{Subject: entity{"member", memberID}, Resource: entity{kind, nodeID}}
+	e.Action.Name = permission
+	decision, err := c.evaluate(ctx, requestID, e)
 	if err != nil {
-		c.logger.Error().Err(err).Str("request_id", requestID).Msg("access evaluation failed")
+		slog.ErrorContext(ctx, "access evaluation failed", "component", "access", "request_id", requestID, "error_message", err.Error())
 	}
 	return decision, err
 }
@@ -80,8 +71,8 @@ func (c *Client) evaluate(ctx context.Context, requestID string, e evaluation) (
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-ID", requestID)
-	c.propagator.Inject(ctx, propagation.HeaderCarrier(req.Header))
-	res, err := c.client.Do(req)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+	res, err := c.http.Do(req)
 	if err != nil {
 		return false, err
 	}

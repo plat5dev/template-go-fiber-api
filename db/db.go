@@ -1,3 +1,4 @@
+// Package db opens the API's SQLite database and keeps its tables.
 package db
 
 import (
@@ -6,40 +7,31 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-func Connect(ctx context.Context) (*sql.DB, error) {
-	path := os.Getenv("DATABASE_PATH")
-	if path == "" {
-		path = "./data/app.db"
-	}
+// Open opens the database at path, making its directory if need be, and creates the
+// tables it lacks.
+func Open(ctx context.Context, path string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
-
-	// modernc.org/sqlite driver name is "sqlite"
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
+	// One connection: SQLite has one writer, and a transaction keeps its connection.
 	db.SetMaxOpenConns(1)
-	db.SetConnMaxLifetime(0)
-
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	if err := db.PingContext(pingCtx); err != nil {
-		_ = db.Close()
+	if err := migrate(ctx, db); err != nil {
+		db.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
-func Migrate(ctx context.Context, db *sql.DB) error {
-	stmts := []string{
+func migrate(ctx context.Context, db *sql.DB) error {
+	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS profiles (
 			user_id TEXT PRIMARY KEY NOT NULL,
 			bio TEXT NOT NULL DEFAULT '',
@@ -65,9 +57,8 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
 			event_id TEXT NOT NULL
 		)`,
-	}
-	for _, s := range stmts {
-		if _, err := db.ExecContext(ctx, s); err != nil {
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}

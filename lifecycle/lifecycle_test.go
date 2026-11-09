@@ -13,10 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog"
-
 	"github.com/example/go-fiber-api/db"
-	"github.com/example/go-fiber-api/pagination"
+	"github.com/example/go-fiber-api/plat5"
 	"github.com/example/go-fiber-api/profiles"
 	"github.com/example/go-fiber-api/tasks"
 )
@@ -122,25 +120,21 @@ func (id *identity) askedAfter() []string {
 
 func setup(t *testing.T, id *identity) *Consumer {
 	t.Helper()
-	t.Setenv("DATABASE_PATH", filepath.Join(t.TempDir(), "app.db"))
-	sqlDB, err := db.Connect(context.Background())
+	sqlDB, err := db.Open(context.Background(), filepath.Join(t.TempDir(), "app.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { sqlDB.Close() })
-	if err := db.Migrate(context.Background(), sqlDB); err != nil {
-		t.Fatal(err)
-	}
 	srv := httptest.NewServer(id)
 	t.Cleanup(srv.Close)
-	c := New(srv.URL, sqlDB, tasks.NewStore(sqlDB), profiles.NewStore(sqlDB), zerolog.Nop())
+	c := New(srv.URL, sqlDB)
 	c.retry = 10 * time.Millisecond
 	return c
 }
 
 func addTask(t *testing.T, c *Consumer, id, projectID string) {
 	t.Helper()
-	err := c.tasks.Insert(context.Background(), &tasks.Task{
+	err := tasks.NewStore(c.db).Insert(context.Background(), &tasks.Task{
 		ID: id, ProjectID: projectID, Title: "t", Status: "todo",
 		CreatedBy: "01jd8x3k7q00000000000000mm", CreatedAt: "now", UpdatedAt: "now",
 	})
@@ -151,7 +145,7 @@ func addTask(t *testing.T, c *Consumer, id, projectID string) {
 
 func count(t *testing.T, c *Consumer, projectID string) int {
 	t.Helper()
-	list, _, err := c.tasks.ListByProject(context.Background(), projectID, pagination.Page{Limit: 100})
+	list, _, err := tasks.NewStore(c.db).List(context.Background(), projectID, plat5.Page{Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,19 +154,18 @@ func count(t *testing.T, c *Consumer, projectID string) int {
 
 func addProfile(t *testing.T, c *Consumer, userID string) {
 	t.Helper()
-	err := c.profiles.Insert(context.Background(), &profiles.Profile{UserID: userID, Bio: "hi", CreatedAt: "now", UpdatedAt: "now"})
-	if err != nil {
+	if _, _, err := profiles.NewStore(c.db).Put(context.Background(), userID, "hi", "now"); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func hasProfile(t *testing.T, c *Consumer, userID string) bool {
 	t.Helper()
-	p, err := c.profiles.FindByUserID(context.Background(), userID)
-	if err != nil {
+	var n int
+	if err := c.db.QueryRow(`SELECT count(*) FROM profiles WHERE user_id = ?`, userID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	return p != nil
+	return n > 0
 }
 
 func cursor(t *testing.T, c *Consumer) string {
@@ -416,5 +409,36 @@ func TestAPageCommitsWithItsCursor(t *testing.T) {
 	}
 	if cur := cursor(t, c); cur != "" {
 		t.Fatalf("cursor = %q", cur)
+	}
+}
+
+// An event's keys match exactly, and one without an id is skipped.
+func TestEventsAreReadExactly(t *testing.T) {
+	page := `{"events":[
+		{"id":"1","type":"node.purged","Kind":"project","node_id":"` + purged + `"},
+		{"type":"user.deleted","user_id":"` + gone + `"},
+		{"id":"3","type":"user.deleted","USER_ID":"` + stays + `"},
+		{"id":"4","type":"node.purged","kind":"project","node_id":"` + kept + `","root_id":"r","occurred_at":"2026-10-27T09:14:03Z"}
+	],"has_more":false}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("after") != "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, _ = w.Write([]byte(page))
+	}))
+	t.Cleanup(srv.Close)
+	c := setup(t, newIdentity())
+	c.url = srv.URL
+	seed(t, c)
+	step(t, c)
+	if count(t, c, purged) != 1 || !hasProfile(t, c, gone) || !hasProfile(t, c, stays) {
+		t.Fatal("acted on an event it shouldn't have")
+	}
+	if count(t, c, kept) != 0 {
+		t.Fatal("didn't act on a well-formed event")
+	}
+	if cur := cursor(t, c); cur != "4" {
+		t.Fatalf("cursor %q, want 4", cur)
 	}
 }

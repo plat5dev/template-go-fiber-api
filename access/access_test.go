@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -45,7 +45,8 @@ func client(t *testing.T, f *identity) *Client {
 	t.Helper()
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, propagation.TraceContext{}, zerolog.Nop())
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	return New(srv.URL)
 }
 
 func TestEvaluate(t *testing.T) {
@@ -100,7 +101,7 @@ func TestNoAnswerIsAnError(t *testing.T) {
 		}
 	}
 
-	if _, err := New("", propagation.TraceContext{}, zerolog.Nop()).Evaluate(context.Background(), "req-1", member, "project", project, "project:read"); err == nil {
+	if _, err := New("").Evaluate(context.Background(), "req-1", member, "project", project, "project:read"); err == nil {
 		t.Fatal("unset identity url: want an error")
 	}
 }
