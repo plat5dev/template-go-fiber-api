@@ -1,36 +1,59 @@
-// Package db opens the API's SQLite database and keeps its tables.
-package db
+package main
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
 
-// Open opens the database at path, making its directory if need be, and creates the
-// tables it lacks.
-func Open(ctx context.Context, path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
+func openDB(ctx context.Context, path string) (*sql.DB, error) {
+	dsn, err := sqliteDSN(path)
 	if err != nil {
 		return nil, err
 	}
-	// One connection: SQLite has one writer, and a transaction keeps its connection.
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	// SQLite allows one writer at a time; a single pooled connection avoids SQLITE_BUSY races.
 	db.SetMaxOpenConns(1)
-	if err := migrate(ctx, db); err != nil {
+	if err := migrateDB(ctx, db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
-func migrate(ctx context.Context, db *sql.DB) error {
+func sqliteDSN(path string) (string, error) {
+	q := url.Values{}
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "journal_mode(WAL)")
+
+	if path == ":memory:" {
+		return "file::memory:?" + q.Encode(), nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("create data dir: %w", err)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve database path: %w", err)
+	}
+	u := url.URL{
+		Scheme:   "file",
+		Path:     filepath.ToSlash(abs),
+		RawQuery: q.Encode(),
+	}
+	return u.String(), nil
+}
+
+func migrateDB(ctx context.Context, db *sql.DB) error {
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS profiles (
 			user_id TEXT PRIMARY KEY NOT NULL,
@@ -38,8 +61,6 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		// A project is a Plat5 node: its tasks are keyed by its id, and go when it's purged.
-		// assignee_id is a member id in the project's tree, or NULL.
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY NOT NULL,
 			project_id TEXT NOT NULL,
@@ -51,8 +72,6 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS tasks_project_id_idx ON tasks (project_id)`,
-		// The last event acted on in identity's lifecycle log: one row, an opaque decimal
-		// string. Kept with the data it cleans up, so a restore rewinds both together.
 		`CREATE TABLE IF NOT EXISTS feed_cursors (
 			id INTEGER PRIMARY KEY NOT NULL CHECK (id = 1),
 			event_id TEXT NOT NULL

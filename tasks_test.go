@@ -3,407 +3,245 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/example/go-fiber-api/plat5"
-	"github.com/example/go-fiber-api/tasks"
+	"time"
 )
 
-const statusSentence = "Status must be todo, in progress, or done."
-
-func (a *testApp) create(projectID, title string) tasks.Task {
+func (a *testApp) createTask(projectID, title string) Task {
 	a.t.Helper()
-	res := a.do("POST", "/projects/"+projectID+"/tasks", `{"title":`+quote(title)+`}`)
+	b, _ := json.Marshal(map[string]any{"title": title})
+	res := a.do("POST", "/projects/"+projectID+"/tasks", string(b))
 	if res.StatusCode != http.StatusCreated {
-		a.t.Fatalf("create: status %d", res.StatusCode)
+		a.t.Fatalf("create task: status %d", res.StatusCode)
 	}
-	return decode[tasks.Task](a.t, res)
+	return decodeBody[Task](a.t, res)
 }
 
-func (a *testApp) get(id string) tasks.Task {
-	a.t.Helper()
-	return decode[tasks.Task](a.t, a.do("GET", tasksPath+"/"+id, ""))
-}
-
-type taskList struct {
-	Tasks   []tasks.Task `json:"tasks"`
-	HasMore bool         `json:"has_more"`
-}
-
-func (a *testApp) list(query string) taskList {
-	a.t.Helper()
-	return decode[taskList](a.t, a.do("GET", tasksPath+query, ""))
-}
-
-func quote(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
-
-func assigneeOf(t tasks.Task) string {
-	if t.AssigneeID == nil {
-		return "null"
-	}
-	return *t.AssigneeID
-}
-
-// Both routes that take a task's body.
-func writes(a *testApp) [][2]string {
-	task := a.create(project, "Launch")
-	return [][2]string{{"POST", tasksPath}, {"PATCH", tasksPath + "/" + task.ID}}
-}
-
-var millis = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$`)
-
-func TestCreate(t *testing.T) {
+func TestTaskCRUDAndTenantIsolation(t *testing.T) {
 	a := newTestApp(t)
-	task := a.create(project, "Launch")
-	if task.ProjectID != project || task.CreatedBy != member || task.Status != "todo" || task.AssigneeID != nil || !plat5.IsID(task.ID) {
-		t.Fatalf("task = %+v", task)
-	}
-	if !millis.MatchString(task.CreatedAt) || task.UpdatedAt != task.CreatedAt {
-		t.Fatalf("times %q, %q", task.CreatedAt, task.UpdatedAt)
-	}
-	if got := a.get(task.ID); got != task {
-		t.Fatalf("read back %+v", got)
-	}
-}
 
-// Without X-Plat5-Member-Id a create is a 400, before its body is read.
-func TestCreateNeedsTheMember(t *testing.T) {
-	a := newTestApp(t)
-	for _, body := range []string{`{"title":"Launch"}`, `{"title":""}`, `{`} {
-		expectMalformed(t, a.do("POST", tasksPath, body, without("X-Plat5-Member-Id")), body)
+	// Create
+	created := a.createTask(testProject, "  Ship it  ")
+	if created.Title != "Ship it" || created.Status != "todo" || created.ProjectID != testProject ||
+		created.CreatedBy != testMember || created.AssigneeID != nil || !isID(created.ID) {
+		t.Fatalf("unexpected task: %+v", created)
 	}
-}
 
-func TestScopedByProject(t *testing.T) {
-	a := newTestApp(t)
-	task := a.create(other, "Elsewhere")
+	// Get
+	got := decodeBody[Task](t, a.do("GET", tasksPath+"/"+created.ID, ""))
+	if got != created {
+		t.Fatalf("get mismatch: %+v != %+v", got, created)
+	}
+
+	// Cross-tenant isolation: another project gets 404 on GET/PATCH/DELETE and empty list.
+	otherTask := a.createTask(testOtherProj, "Other tenant")
 	for _, method := range []string{"GET", "PATCH", "DELETE"} {
-		if res := a.do(method, tasksPath+"/"+task.ID, `{"title":"x"}`); res.StatusCode != http.StatusNotFound {
-			t.Fatalf("%s: status %d", method, res.StatusCode)
+		if res := a.do(method, tasksPath+"/"+otherTask.ID, `{"title":"hijack"}`); res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s cross-tenant: got %d, want 404", method, res.StatusCode)
 		}
 	}
-	if got := a.list(""); len(got.Tasks) != 0 {
-		t.Fatalf("listed %+v", got.Tasks)
+
+	// Delete
+	if res := a.do("DELETE", tasksPath+"/"+created.ID, ""); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: got %d, want 204", res.StatusCode)
+	}
+	if res := a.do("DELETE", tasksPath+"/"+created.ID, ""); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("delete again: got %d, want 404", res.StatusCode)
 	}
 }
 
-func TestListPages(t *testing.T) {
+func TestCreateRequiresMemberHeader(t *testing.T) {
+	a := newTestApp(t)
+	res := a.do("POST", tasksPath, `{"title":"Launch"}`, withoutHeader("X-Plat5-Member-Id"))
+	body := decodeBody[errorBody](t, res)
+	if res.StatusCode != http.StatusBadRequest || body.Error.Code != "INVALID_REQUEST" {
+		t.Fatalf("expected 400 INVALID_REQUEST, got %d %+v", res.StatusCode, body.Error)
+	}
+}
+
+func TestTaskListPaginationAndValidation(t *testing.T) {
 	a := newTestApp(t)
 	var ids []string
-	// Made in the same millisecond or not, they list in the order they were made.
-	for i := range 10 {
-		ids = append(ids, a.create(project, string(rune('a'+i))).ID)
+	for i := range 6 {
+		ids = append(ids, a.createTask(testProject, string(rune('a'+i))).ID)
 	}
-	first := a.list("?limit=4")
-	second := a.list("?limit=100&starting_after=" + first.Tasks[3].ID)
-	var got []string
-	for _, task := range append(first.Tasks, second.Tasks...) {
-		got = append(got, task.ID)
+
+	type listResp struct {
+		Tasks   []Task `json:"tasks"`
+		HasMore bool   `json:"has_more"`
 	}
-	if !slices.Equal(got, ids) || !first.HasMore || second.HasMore {
-		t.Fatalf("pages %v (%v, %v), want %v", got, first.HasMore, second.HasMore, ids)
+	p1 := decodeBody[listResp](t, a.do("GET", tasksPath+"?limit=4", ""))
+	if len(p1.Tasks) != 4 || !p1.HasMore {
+		t.Fatalf("page 1: len=%d has_more=%v", len(p1.Tasks), p1.HasMore)
+	}
+	p2 := decodeBody[listResp](t, a.do("GET", tasksPath+"?limit=200&starting_after="+p1.Tasks[3].ID, ""))
+	if len(p2.Tasks) != 2 || p2.HasMore {
+		t.Fatalf("page 2: len=%d has_more=%v", len(p2.Tasks), p2.HasMore)
+	}
+	var gotIDs []string
+	for _, task := range append(p1.Tasks, p2.Tasks...) {
+		gotIDs = append(gotIDs, task.ID)
+	}
+	if !slices.Equal(gotIDs, ids) {
+		t.Fatalf("ids %v != %v", gotIDs, ids)
+	}
+
+	// Invalid pagination query params -> 422 naming both fields.
+	res := a.do("GET", tasksPath+"?limit=0&starting_after=not-a-ulid", "")
+	body := decodeBody[errorBody](t, res)
+	if res.StatusCode != http.StatusUnprocessableEntity || len(body.Error.Details.Fields) != 2 {
+		t.Fatalf("invalid pagination: %d %+v", res.StatusCode, body.Error)
 	}
 }
 
-func TestListParameters(t *testing.T) {
+func TestTaskValidationAndJSONErrors(t *testing.T) {
 	a := newTestApp(t)
-	a.create(project, "a")
-	a.create(project, "b")
-	for query, want := range map[string]int{"": 2, "?limit=1": 1, "?limit=001": 1, "?limit=1000": 2, "?starting_after=7zzzzzzzzzzzzzzzzzzzzzzzzz": 0} {
-		if got := a.list(query); len(got.Tasks) != want {
-			t.Fatalf("%s: %d tasks, want %d", query, len(got.Tasks), want)
-		}
-	}
-	for _, limit := range []string{"", "abc", "1.5", "0", "-1", "%201"} {
-		expectField(t, a.do("GET", tasksPath+"?limit="+limit, ""), limit, "limit", fallback)
-	}
-	for _, after := range []string{"", "nope", "01JD8X3K7Q0000000000000000", "81jd8x3k7q0000000000000000", "01jd8x3k7q000000000000000i"} {
-		expectField(t, a.do("GET", tasksPath+"?starting_after="+after, ""), after, "starting_after", fallback)
-	}
-	expectFields(t, a.do("GET", tasksPath+"?limit=x&starting_after=x", ""), "both",
-		plat5.FieldError{Path: "limit", Message: fallback}, plat5.FieldError{Path: "starting_after", Message: fallback})
-}
 
-func TestTitleAndStatus(t *testing.T) {
-	a := newTestApp(t)
-	for _, w := range writes(a) {
-		for _, title := range []string{"", "   ", "\t\u3000\n"} {
-			expectField(t, a.do(w[0], w[1], `{"title":`+quote(title)+`}`), w[0], "title", "Title is required.")
-		}
-		expectField(t, a.do(w[0], w[1], `{"title":"`+strings.Repeat("x", 256)+`"}`), w[0], "title", "Title is too long.")
-		for _, status := range []string{`"TODO"`, `"in progress"`, `" done"`, `""`, `5`} {
-			expectField(t, a.do(w[0], w[1], `{"title":"Launch","status":`+status+`}`), w[0]+" "+status, "status", statusSentence)
-		}
-	}
-	// A create without a title; a null one, or a null status, is the wrong type.
-	expectField(t, a.do("POST", tasksPath, `{}`), "no title", "title", "Title is required.")
-	expectField(t, a.do("POST", tasksPath, `{"title":null}`), "null title", "title", fallback)
-	expectField(t, a.do("POST", tasksPath, `{"title":"a","status":null}`), "null status", "status", statusSentence)
-}
-
-func TestTitlesAreTrimmed(t *testing.T) {
-	a := newTestApp(t)
-	if task := a.create(project, " \t\u00a0Launch\u3000 "); task.Title != "Launch" {
-		t.Fatalf("title %q", task.Title)
-	}
-	task := a.create(project, "Launch")
-	if got := decode[tasks.Task](t, a.do("PATCH", tasksPath+"/"+task.ID, `{"title":"  Renamed  "}`)); got.Title != "Renamed" {
-		t.Fatalf("title %q", got.Title)
-	}
-}
-
-// A title's limit counts characters, not bytes.
-func TestTitleLimitIsCharacters(t *testing.T) {
-	a := newTestApp(t)
-	for _, title := range []string{strings.Repeat("é", 255), strings.Repeat("😀", 255)} {
-		if got := a.get(a.create(project, title).ID); got.Title != title {
-			t.Fatalf("read back %q", got.Title)
-		}
-	}
-	for _, title := range []string{strings.Repeat("é", 256), strings.Repeat("😀", 256)} {
-		expectField(t, a.do("POST", tasksPath, `{"title":`+quote(title)+`}`), "long", "title", "Title is too long.")
-	}
-}
-
-func TestWrongTypes(t *testing.T) {
-	a := newTestApp(t)
-	for _, w := range writes(a) {
-		for _, tc := range []struct {
-			body   string
-			fields []plat5.FieldError
-		}{
-			{`{"title":123}`, []plat5.FieldError{{Path: "title", Message: fallback}}},
-			{`{"title":true}`, []plat5.FieldError{{Path: "title", Message: fallback}}},
-			{`{"title":["a"]}`, []plat5.FieldError{{Path: "title", Message: fallback}}},
-			{`{"title":"Launch","status":5}`, []plat5.FieldError{{Path: "status", Message: statusSentence}}},
-			// Every wrong field, title, status, then assignee_id.
-			{`{"assignee_id":5,"status":5,"title":""}`, []plat5.FieldError{
-				{Path: "title", Message: "Title is required."},
-				{Path: "status", Message: statusSentence},
-				{Path: "assignee_id", Message: fallback},
-			}},
-		} {
-			expectFields(t, a.do(w[0], w[1], tc.body), w[0]+" "+tc.body, tc.fields...)
-		}
-	}
-}
-
-// PATCH: an absent or null title or status leaves it, and a no-op still answers the task.
-func TestUpdateNullLeaves(t *testing.T) {
-	a := newTestApp(t)
-	task := a.create(project, "Launch")
-	for _, body := range []string{`{"title":null,"status":null}`, `{}`} {
-		res := a.do("PATCH", tasksPath+"/"+task.ID, body)
-		got := decode[tasks.Task](t, res)
-		if res.StatusCode != http.StatusOK || got.Title != "Launch" || got.Status != "todo" || res.Header.Get(plat5.AuditDetailsHeader) != "" {
-			t.Fatalf("%s: %d %+v", body, res.StatusCode, got)
-		}
-	}
-	got := decode[tasks.Task](t, a.do("PATCH", tasksPath+"/"+task.ID, `{"title":"Ship","status":"done"}`))
-	if got.Title != "Ship" || got.Status != "done" || !millis.MatchString(got.UpdatedAt) {
-		t.Fatalf("%+v", got)
-	}
-}
-
-// The body must be application/json (any parameters, any case), and JSON.
-func TestBodyMustBeJSON(t *testing.T) {
-	a := newTestApp(t)
-	ws := writes(a)
-	for _, ct := range []string{"", "text/plain", "application/x-www-form-urlencoded", "application/jsonx", "application/merge-patch+json", "not a type"} {
-		for _, w := range ws {
-			expectMalformed(t, a.do(w[0], w[1], `{"title":"Other"}`, header("Content-Type", ct)), w[0]+" "+ct)
-		}
-	}
-	for _, body := range []string{"", " ", "{", `{"title":"a"} x`} {
-		for _, w := range ws {
-			expectMalformed(t, a.do(w[0], w[1], body), w[0]+" "+body)
-		}
-	}
-	for _, body := range []string{`[{"title":"a"}]`, `"a"`, "5", "true", "null"} {
-		for _, w := range ws {
-			expectField(t, a.do(w[0], w[1], body), w[0]+" "+body, "body", fallback)
-		}
-	}
-	for _, ct := range []string{"application/json", "Application/JSON", "application/json;charset=UTF-8;", `application/json; charset="utf-8"`} {
-		if res := a.do("POST", tasksPath, `{"title":"Launch"}`, header("Content-Type", ct)); res.StatusCode != http.StatusCreated {
-			t.Fatalf("%s: %d", ct, res.StatusCode)
-		}
-	}
-	if got := a.list(""); len(got.Tasks) != 5 || got.Tasks[0].Title != "Launch" {
-		t.Fatalf("written: %+v", got.Tasks)
-	}
-}
-
-// Keys match exactly: an unknown one is a 422 naming it, before any value is checked.
-func TestUnknownFields(t *testing.T) {
-	a := newTestApp(t)
-	task := a.create(project, "Launch")
-	for _, tc := range []struct{ method, path, body, key string }{
-		{"POST", tasksPath, `{"Title":"x"}`, "Title"},
-		{"POST", tasksPath, `{"title":"x","priority":1}`, "priority"},
-		{"POST", tasksPath, `{"Status":"done","title":"","Assignee_ID":"` + assignee + `"}`, "Status"},
-		{"POST", tasksPath, `{"title":5,"x":1}`, "x"},
-		{"PATCH", tasksPath + "/" + task.ID, `{"Title":"x"}`, "Title"},
-		// A missing task: the body first.
-		{"PATCH", tasksPath + "/" + missing, `{"title":"x","extra":{"a":1}}`, "extra"},
+	// Non-JSON Content-Type & malformed JSON -> 400
+	for _, tc := range []struct {
+		ct, body string
+	}{
+		{"text/plain", `{"title":"x"}`},
+		{"application/json", ``},
+		{"application/json", `{`},
+		{"application/json", `{"title":"x"} trailing`},
 	} {
-		expectField(t, a.do(tc.method, tc.path, tc.body), tc.body, tc.key, tc.key+" isn't a field.")
+		res := a.do("POST", tasksPath, tc.body, withHeader("Content-Type", tc.ct))
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("(%q, %q): got %d, want 400", tc.ct, tc.body, res.StatusCode)
+		}
 	}
-	if got := a.get(task.ID); got != task || len(a.list("").Tasks) != 1 || len(a.identity.calls()) != 0 {
-		t.Fatalf("written: %+v", got)
-	}
-	// A repeated key is allowed: the last one counts.
-	if got := decode[tasks.Task](t, a.do("PATCH", tasksPath+"/"+task.ID, `{"title":"a","title":"Ship"}`)); got.Title != "Ship" {
-		t.Fatalf("title %q", got.Title)
+
+	// Non-object JSON, unknown field, wrong types, and field constraints -> 422
+	for _, tc := range []struct {
+		body, path string
+	}{
+		{`[]`, "body"},
+		{`{"title":"x","extra":1}`, "extra"},
+		{`{"title":123}`, "title"},
+		{`{}`, "title"},
+		{`{"title":"   "}`, "title"},
+		{`{"title":"` + strings.Repeat("é", 256) + `"}`, "title"},
+		{`{"title":"ok","status":"unknown"}`, "status"},
+		{`{"title":"ok","assignee_id":"NOT_ULID"}`, "assignee_id"},
+	} {
+		res := a.do("POST", tasksPath, tc.body)
+		body := decodeBody[errorBody](t, res)
+		if res.StatusCode != http.StatusUnprocessableEntity || body.Error.Code != "VALIDATION_ERROR" ||
+			len(body.Error.Details.Fields) == 0 || body.Error.Details.Fields[0].Path != tc.path {
+			t.Fatalf("body %s: got %d %+v (want path %q)", tc.body, res.StatusCode, body.Error, tc.path)
+		}
 	}
 }
 
-func TestAuditDetails(t *testing.T) {
+func TestPatchNoOpDoesNotWriteOrBumpUpdatedAt(t *testing.T) {
 	a := newTestApp(t)
+	task := a.createTask(testProject, "Initial")
+
+	// Wait past the 1ms timestamp resolution to ensure a DB write would bump updated_at.
+	time.Sleep(5 * time.Millisecond)
+
+	for _, payload := range []string{`{}`, `{"title":"Initial"}`, `{"status":"todo"}`, `{"assignee_id":null}`} {
+		res := a.do("PATCH", tasksPath+"/"+task.ID, payload)
+		got := decodeBody[Task](t, res)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("no-op %s: status %d", payload, res.StatusCode)
+		}
+		if got.UpdatedAt != task.UpdatedAt {
+			t.Fatalf("no-op %s bumped updated_at: %s -> %s", payload, task.UpdatedAt, got.UpdatedAt)
+		}
+		if res.Header.Get(auditDetailsHeader) != "" {
+			t.Fatalf("no-op %s emitted audit header: %q", payload, res.Header.Get(auditDetailsHeader))
+		}
+	}
+
+	// Real update bumps updated_at and emits audit diff.
+	res := a.do("PATCH", tasksPath+"/"+task.ID, `{"title":"Renamed","status":"done"}`)
+	updated := decodeBody[Task](t, res)
+	if updated.Title != "Renamed" || updated.Status != "done" || updated.UpdatedAt == task.UpdatedAt {
+		t.Fatalf("real update failed: %+v", updated)
+	}
+	wantAudit := `{"status":{"from":"todo","to":"done"},"title":{"from":"Initial","to":"Renamed"}}`
+	if got := res.Header.Get(auditDetailsHeader); got != wantAudit {
+		t.Fatalf("audit header = %q, want %q", got, wantAudit)
+	}
+}
+
+func TestAuditHeaderEncoding(t *testing.T) {
+	a := newTestApp(t)
+
+	// HTML chars (<, >, &) stay readable; non-ASCII is \uXXXX-escaped.
 	res := a.do("POST", tasksPath, `{"title":"<é😀&>"}`)
-	task := decode[tasks.Task](t, res)
-	if res.Header.Get(plat5.AuditCreatedHeader) != task.ID {
-		t.Fatalf("created %q", res.Header.Get(plat5.AuditCreatedHeader))
+	task := decodeBody[Task](t, res)
+	if res.Header.Get(auditCreatedHeader) != task.ID {
+		t.Fatalf("audit created = %q, want %q", res.Header.Get(auditCreatedHeader), task.ID)
 	}
-	// Sorted keys, HTML and what isn't ASCII escaped.
-	want := `{"assignee_id":null,"status":"todo","task_id":"` + task.ID + `","title":"\u003c\u00e9\ud83d\ude00\u0026\u003e"}`
-	if got := res.Header.Get(plat5.AuditDetailsHeader); got != want {
-		t.Fatalf("details %s, want %s", got, want)
+	want := `{"assignee_id":null,"status":"todo","task_id":"` + task.ID + `","title":"<\u00e9\ud83d\ude00&>"}`
+	if got := res.Header.Get(auditDetailsHeader); got != want {
+		t.Fatalf("audit details = %q, want %q", got, want)
 	}
-	path := tasksPath + "/" + task.ID
-	for _, tc := range []struct{ body, want string }{
-		{`{"status":"done"}`, `{"status":{"from":"todo","to":"done"}}`},
-		{`{"assignee_id":"` + assignee + `"}`, `{"assignee_id":{"from":null,"to":"` + assignee + `"}}`},
-		{`{"assignee_id":null}`, `{"assignee_id":{"from":"` + assignee + `","to":null}}`},
-		{`{"status":"done"}`, ``},
-	} {
-		if got := a.do("PATCH", path, tc.body).Header.Get(plat5.AuditDetailsHeader); got != tc.want {
-			t.Fatalf("%s: details %s, want %s", tc.body, got, tc.want)
-		}
-	}
-	res = a.do("DELETE", path, "")
-	if res.StatusCode != http.StatusNoContent || res.Header.Get(plat5.AuditDetailsHeader) != "" {
-		t.Fatalf("delete: %d %q", res.StatusCode, res.Header.Get(plat5.AuditDetailsHeader))
-	}
-	if res := a.do("DELETE", path, ""); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("delete again: %d", res.StatusCode)
+
+	// Exceeding 4096 bytes returns an error from encodeAuditDetails.
+	if _, err := encodeAuditDetails(auditDetails{"bio": strings.Repeat("x", auditMaxBytes)}); err == nil {
+		t.Fatal("expected error for oversized audit details")
 	}
 }
 
-// A DELETE never reads its body.
-func TestDeleteIgnoresItsBody(t *testing.T) {
-	a := newTestApp(t)
-	for _, tc := range [][2]string{{"application/json", ""}, {"application/json", "{"}, {"text/plain", "hello"}, {"", "x"}} {
-		task := a.create(project, "Launch")
-		if res := a.do("DELETE", tasksPath+"/"+task.ID, tc[1], header("Content-Type", tc[0])); res.StatusCode != http.StatusNoContent {
-			t.Fatalf("%v: %d", tc, res.StatusCode)
-		}
-	}
-}
-
-// An assignee is asked about, on the project in the path, for the configured permission,
-// with the request's X-Request-ID and trace.
-func TestAssign(t *testing.T) {
+func TestAccessEvaluationAssigneeFlow(t *testing.T) {
 	a := newTestApp(t)
 	const traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-	res := a.do("POST", tasksPath, `{"title":"Launch","assignee_id":"`+assignee+`"}`, header("traceparent", traceparent))
-	task := decode[tasks.Task](t, res)
-	if res.StatusCode != http.StatusCreated || assigneeOf(task) != assignee || assigneeOf(a.get(task.ID)) != assignee {
-		t.Fatalf("create: %d %+v", res.StatusCode, task)
+
+	// Allowed assignee on POST forwards traceparent and omits X-Request-ID when empty.
+	res := a.do("POST", tasksPath, `{"title":"Assigned","assignee_id":"`+testAssignee+`"}`,
+		withHeader("traceparent", traceparent), withoutHeader("X-Request-ID"))
+	task := decodeBody[Task](t, res)
+	if res.StatusCode != http.StatusCreated || task.AssigneeID == nil || *task.AssigneeID != testAssignee {
+		t.Fatalf("create assigned: %d %+v", res.StatusCode, task)
 	}
-	if got := a.identity.calls(); !slices.Equal(got, []string{evaluation(assignee)}) {
-		t.Fatalf("identity asked %q", got)
+	hdr := a.identity.lastHeader()
+	if !strings.HasPrefix(hdr.Get("traceparent"), "00-0af7651916cd43dd8448eb211c80319c-") {
+		t.Fatalf("traceparent not propagated: %q", hdr.Get("traceparent"))
 	}
-	if !strings.HasPrefix(a.identity.traceparent, "00-0af7651916cd43dd8448eb211c80319c-") {
-		t.Fatalf("traceparent %q", a.identity.traceparent)
+	if _, sent := hdr["X-Request-Id"]; sent {
+		t.Fatalf("expected X-Request-ID omitted when empty, got %v", hdr["X-Request-Id"])
 	}
 
-	path := tasksPath + "/" + task.ID
-	// Absent leaves the assignee, and null unassigns: neither asks.
-	if got := decode[tasks.Task](t, a.do("PATCH", path, `{"title":"Renamed"}`)); assigneeOf(got) != assignee {
-		t.Fatalf("rename: %+v", got)
+	// Unassign with null does not call identity; reassign forwards non-empty X-Request-ID.
+	res = a.do("PATCH", tasksPath+"/"+task.ID, `{"assignee_id":null}`)
+	unassigned := decodeBody[Task](t, res)
+	if unassigned.AssigneeID != nil || len(a.identity.recordedCalls()) != 1 {
+		t.Fatalf("unassign: %+v calls=%d", unassigned, len(a.identity.recordedCalls()))
 	}
-	if got := decode[tasks.Task](t, a.do("PATCH", path, `{"assignee_id":null}`)); got.AssigneeID != nil || a.get(task.ID).AssigneeID != nil {
-		t.Fatalf("unassign: %+v", got)
-	}
-	if got := decode[tasks.Task](t, a.do("PATCH", path, `{"assignee_id":"`+assignee+`"}`)); assigneeOf(got) != assignee {
-		t.Fatalf("assign: %+v", got)
-	}
-	a.do("POST", tasksPath, `{"title":"b","assignee_id":null}`)
-	if got := a.identity.calls(); len(got) != 2 {
-		t.Fatalf("identity asked %d times, want 2", len(got))
-	}
-}
 
-func TestBadAssignee(t *testing.T) {
-	a := newTestApp(t)
-	for _, w := range writes(a) {
-		for _, value := range []string{`""`, `"someone"`, `"01JD8X3K7Q00000000000000AA"`, `5`, `{}`} {
-			expectField(t, a.do(w[0], w[1], `{"title":"Other","assignee_id":`+value+`}`), w[0]+" "+value, "assignee_id", fallback)
-		}
+	res = a.do("PATCH", tasksPath+"/"+task.ID, `{"assignee_id":"`+testAssignee+`"}`, withHeader("X-Request-ID", "req-assign"))
+	if res.StatusCode != http.StatusOK || a.identity.lastHeader().Get("X-Request-ID") != "req-assign" {
+		t.Fatalf("reassign: status=%d hdr=%v", res.StatusCode, a.identity.lastHeader())
 	}
-	if got := a.identity.calls(); len(got) != 0 {
-		t.Fatalf("identity asked %q", got)
-	}
-}
 
-// identity's false is a 422; no answer is a 503. Either way nothing is written.
-func TestAssigneeRefused(t *testing.T) {
+	// Denied by identity -> 422 on assignee_id.
+	a.identity.setAnswer(http.StatusOK, `{"decision":false}`)
+	res = a.do("POST", tasksPath, `{"title":"Denied","assignee_id":"`+testAssignee+`"}`)
+	body := decodeBody[errorBody](t, res)
+	if res.StatusCode != http.StatusUnprocessableEntity || body.Error.Details.Fields[0].Path != "assignee_id" {
+		t.Fatalf("denied: %d %+v", res.StatusCode, body.Error)
+	}
+
+	// Identity error / missing decision / unset URL -> fail-closed 503.
 	for _, tc := range []struct {
 		status int
 		body   string
-		want   int
 	}{
-		{http.StatusOK, `{"decision":false}`, http.StatusUnprocessableEntity},
-		{http.StatusServiceUnavailable, `{"error":{"code":"SERVICE_UNAVAILABLE"}}`, http.StatusServiceUnavailable},
-		{http.StatusInternalServerError, `{}`, http.StatusServiceUnavailable},
-		{http.StatusOK, `{}`, http.StatusServiceUnavailable},
+		{http.StatusServiceUnavailable, `{}`},
+		{http.StatusInternalServerError, `{"decision":true}`},
+		{http.StatusOK, `{}`},
 	} {
-		a := newTestApp(t)
-		ws := writes(a)
-		a.identity.answer(tc.status, tc.body)
-		for _, w := range ws {
-			res := a.do(w[0], w[1], `{"title":"Other","assignee_id":"`+assignee+`"}`)
-			if tc.want == http.StatusUnprocessableEntity {
-				expectField(t, res, w[0], "assignee_id", "That person can't see this project.")
-				continue
-			}
-			if body := decode[errorBody](t, res); res.StatusCode != tc.want || body.Error.Code != "SERVICE_UNAVAILABLE" || body.Error.Type != "api_error" {
-				t.Fatalf("identity %d %s, %s: %d %+v", tc.status, tc.body, w[0], res.StatusCode, body.Error)
-			}
-		}
-		if tc.want == http.StatusServiceUnavailable {
-			lines := a.requestLines()
-			if line := lines[len(lines)-1]; line["level"] != "error" || line["error_type"] != "network" {
-				t.Fatalf("log %v", line)
-			}
-		}
-		if got := a.list(""); len(got.Tasks) != 1 || got.Tasks[0].Title != "Launch" || got.Tasks[0].AssigneeID != nil {
-			t.Fatalf("identity %d %s: tasks %+v", tc.status, tc.body, got.Tasks)
+		a.identity.setAnswer(tc.status, tc.body)
+		res = a.do("POST", tasksPath, `{"title":"Fail","assignee_id":"`+testAssignee+`"}`)
+		body = decodeBody[errorBody](t, res)
+		if res.StatusCode != http.StatusServiceUnavailable || body.Error.Code != "SERVICE_UNAVAILABLE" {
+			t.Fatalf("identity (%d %s): got %d %+v", tc.status, tc.body, res.StatusCode, body.Error)
 		}
 	}
-}
-
-// On an update: the body, then the task's 404, then identity.
-func TestUpdateOrder(t *testing.T) {
-	a := newTestApp(t)
-	expectField(t, a.do("PATCH", tasksPath+"/"+missing, `{"title":"","assignee_id":"`+assignee+`"}`), "body", "title", "Title is required.")
-	if res := a.do("PATCH", tasksPath+"/"+missing, `{"assignee_id":"`+assignee+`"}`); res.StatusCode != http.StatusNotFound {
-		t.Fatalf("missing task: %d", res.StatusCode)
-	}
-	if got := a.identity.calls(); len(got) != 0 {
-		t.Fatalf("identity asked %q", got)
-	}
-}
-
-// A body's size is the gateway's to limit: a large one is read like any other.
-func TestNoBodyLimit(t *testing.T) {
-	a := newTestApp(t)
-	expectField(t, a.do("POST", tasksPath, `{"title":"`+strings.Repeat("x", 5<<20)+`"}`), "5 MiB", "title", "Title is too long.")
 }

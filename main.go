@@ -1,12 +1,15 @@
-// The API: tasks inside a Plat5 project, and each person's profile, behind Plat5's gateway.
+// Reference Plat5 API: project-scoped tasks and user profiles behind Plat5's gateway.
 package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -14,28 +17,17 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/adaptor"
 	"github.com/gofiber/fiber/v3/middleware/recover"
-
-	"github.com/example/go-fiber-api/access"
-	"github.com/example/go-fiber-api/db"
-	"github.com/example/go-fiber-api/lifecycle"
-	"github.com/example/go-fiber-api/plat5"
-	"github.com/example/go-fiber-api/profiles"
-	"github.com/example/go-fiber-api/tasks"
-	"github.com/example/go-fiber-api/telemetry"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// version is the release this binary was built for, service.version, set with
-// -ldflags "-X main.version=$VERSION". A build without one is dev.
+// version is set at build time with -ldflags "-X main.version=$VERSION".
 var version = "dev"
 
-// permissionName is a permission's name as Plat5's roles write it.
 var permissionName = regexp.MustCompile(`^[a-z0-9:._-]{1,64}$`)
 
 func main() {
-	// Every line on stdout is JSON (plat5 docs/reference/telemetry.md#logs).
-	slog.SetDefault(telemetry.NewLogger(os.Stdout))
+	slog.SetDefault(newLogger(os.Stdout))
 	if err := run(); err != nil {
 		slog.Error("api stopped", "error_message", err.Error())
 		os.Exit(1)
@@ -43,98 +35,130 @@ func main() {
 }
 
 func run() error {
-	// The permission an assignee needs on the task's project: the deployment's name for
-	// it, never the code's.
 	assigneePermission := os.Getenv("TASK_ASSIGNEE_PERMISSION")
 	if !permissionName.MatchString(assigneePermission) {
-		return fmt.Errorf("TASK_ASSIGNEE_PERMISSION is %q: set it to the permission an assignee needs on the task's project ([a-z0-9:._-], at most 64 characters; the starter's is project:read)", assigneePermission)
+		return fmt.Errorf("TASK_ASSIGNEE_PERMISSION is %q: must match [a-z0-9:._-]{1,64} (e.g. project:read)", assigneePermission)
 	}
 	identityURL := os.Getenv("IDENTITY_INTERNAL_URL")
 
-	// SIGINT or SIGTERM ends ctx: both servers shut down, and so does the lifecycle reader,
-	// its read in flight cancelled.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	shutdown, err := telemetry.Setup(ctx, version)
+	shutdownTelemetry, err := setupTelemetry(ctx, version)
 	if err != nil {
 		return err
 	}
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := shutdown(ctx); err != nil {
-			slog.Error("telemetry shutdown", "error_message", err.Error())
+		if err := shutdownTelemetry(sctx); err != nil {
+			slog.Error("telemetry shutdown failed", "error_message", err.Error())
 		}
 	}()
 
-	sqlDB, err := db.Open(ctx, env("DATABASE_PATH", "./data/app.db"))
+	sqlDB, err := openDB(ctx, env("DATABASE_PATH", "./data/app.db"))
 	if err != nil {
 		return err
 	}
 	defer sqlDB.Close()
 
-	taskStore, profileStore := tasks.NewStore(sqlDB), profiles.NewStore(sqlDB)
-	app := newApp(tasks.NewHandler(taskStore, access.New(identityURL), assigneePermission), profiles.NewHandler(profileStore))
+	app := newApp(
+		newTaskHandler(newTaskStore(sqlDB), newAccessClient(identityURL), assigneePermission),
+		newProfileHandler(newProfileStore(sqlDB)),
+	)
 
-	internal := fiber.New(fiber.Config{ErrorHandler: plat5.ErrorHandler})
-	internal.Get("/health/live", func(c fiber.Ctx) error { return c.JSON(fiber.Map{"status": "healthy"}) })
-	internal.Get("/health/ready", func(c fiber.Ctx) error {
-		ctx, cancel := context.WithTimeout(c.Context(), 2*time.Second)
-		defer cancel()
-		if err := sqlDB.PingContext(ctx); err != nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"status": "unhealthy"})
-		}
-		return c.JSON(fiber.Map{"status": "healthy"})
-	})
-	internal.Get("/metrics", adaptor.HTTPHandler(telemetry.MetricsHandler()))
+	port, internalPort := env("PORT", "3000"), env("INTERNAL_PORT", "3001")
+	internalSrv := &http.Server{
+		Addr:              ":" + internalPort,
+		Handler:           newInternalHandler(sqlDB),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	following := make(chan struct{})
 	if identityURL != "" {
 		go func() {
 			defer close(following)
-			lifecycle.New(identityURL, sqlDB).Run(ctx)
+			newLifecycleConsumer(identityURL, sqlDB).run(ctx)
 		}()
 	} else {
 		close(following)
-		slog.Warn("IDENTITY_INTERNAL_URL is unset: not reading identity's lifecycle log, so a purged project's tasks and a deleted person's profile are kept, and a task's assignee can't be checked (503)")
+		slog.Warn("IDENTITY_INTERNAL_URL is unset: lifecycle log disabled and assignee checks will return 503")
 	}
 
-	port, internalPort := env("PORT", "3000"), env("INTERNAL_PORT", "3001")
 	slog.Info("starting api server", "port", port, "internal_port", internalPort)
-	listen := fiber.ListenConfig{GracefulContext: ctx, DisableStartupMessage: true}
+
 	errs := make(chan error, 2)
-	go func() { errs <- internal.Listen(":"+internalPort, listen) }()
-	go func() { errs <- app.Listen(":"+port, listen) }()
+	go func() {
+		if err := internalSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errs <- fmt.Errorf("internal server: %w", err)
+			return
+		}
+		errs <- nil
+	}()
+	go func() {
+		errs <- app.Listen(":"+port, fiber.ListenConfig{
+			GracefulContext:       ctx,
+			DisableStartupMessage: true,
+		})
+	}()
+
+	internalShutdown := make(chan error, 1)
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		internalShutdown <- internalSrv.Shutdown(sctx)
+	}()
+
 	err = <-errs
 	stop()
-	err = errors.Join(err, <-errs)
-	// Wait for the reader, so its last transaction ends before the database closes.
+	err = errors.Join(err, <-errs, <-internalShutdown)
 	<-following
 	return err
 }
 
-// newApp is the public API: its routes, behind the request telemetry and the error
-// envelope.
-func newApp(taskHandler *tasks.Handler, profileHandler *profiles.Handler) *fiber.App {
+func newApp(tasks *taskHandler, profiles *profileHandler) *fiber.App {
 	app := fiber.New(fiber.Config{
-		ErrorHandler: plat5.ErrorHandler,
-		// A body's size is the gateway's to limit (max_body_bytes), not the API's.
+		ErrorHandler: errorHandler,
+		// Body size limits belong to the Plat5 gateway (max_body_bytes).
 		BodyLimit: math.MaxInt,
 	})
-	app.Use(telemetry.Middleware()...)
+	app.Use(telemetryMiddleware()...)
 	app.Use(recover.New())
 
-	app.Get("/users/:user_id/profile", profileHandler.Get)
-	app.Put("/users/:user_id/profile", profileHandler.Put)
+	app.Get("/users/:user_id/profile", profiles.get)
+	app.Put("/users/:user_id/profile", profiles.put)
 
-	// A project is a Plat5 node: its id is in the path, from the front door.
-	app.Get("/projects/:project_id/tasks", taskHandler.List)
-	app.Post("/projects/:project_id/tasks", taskHandler.Create)
-	app.Get("/projects/:project_id/tasks/:task_id", taskHandler.Get)
-	app.Patch("/projects/:project_id/tasks/:task_id", taskHandler.Update)
-	app.Delete("/projects/:project_id/tasks/:task_id", taskHandler.Delete)
+	app.Get("/projects/:project_id/tasks", tasks.list)
+	app.Post("/projects/:project_id/tasks", tasks.create)
+	app.Get("/projects/:project_id/tasks/:task_id", tasks.get)
+	app.Patch("/projects/:project_id/tasks/:task_id", tasks.update)
+	app.Delete("/projects/:project_id/tasks/:task_id", tasks.delete)
 	return app
+}
+
+func newInternalHandler(sqlDB *sql.DB) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
+	})
+	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := sqlDB.PingContext(ctx); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
+	})
+	mux.Handle("GET /metrics", promhttp.Handler())
+	return mux
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func env(key, fallback string) string {

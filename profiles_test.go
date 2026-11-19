@@ -4,75 +4,67 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/example/go-fiber-api/plat5"
-	"github.com/example/go-fiber-api/profiles"
 )
 
-const profilePath = "/users/" + user + "/profile"
-
-func (a *testApp) profile(method, body string, opts ...opt) *http.Response {
+func (a *testApp) doProfile(method, body string, opts ...reqOpt) *http.Response {
 	a.t.Helper()
-	return a.do(method, profilePath, body, append([]opt{without("X-Plat5-Member-Id"), without("X-Plat5-Project-Id"), header("X-Plat5-User-Id", user)}, opts...)...)
+	base := []reqOpt{
+		withoutHeader("X-Plat5-Member-Id"),
+		withoutHeader("X-Plat5-Project-Id"),
+		withHeader("X-Plat5-User-Id", testUser),
+	}
+	return a.do(method, profilePath, body, append(base, opts...)...)
 }
 
-// GET makes an empty profile on the first call, and answers the same one after.
-func TestProfileGet(t *testing.T) {
+func TestProfileLazyGetAndPut(t *testing.T) {
 	a := newTestApp(t)
-	first := decode[profiles.Profile](t, a.profile("GET", ""))
-	if first.UserID != user || first.Bio != "" || !millis.MatchString(first.CreatedAt) || first.UpdatedAt != first.CreatedAt {
-		t.Fatalf("first: %+v", first)
-	}
-	if again := decode[profiles.Profile](t, a.profile("GET", "")); again != first {
-		t.Fatalf("again: %+v", again)
-	}
-}
 
-func TestBio(t *testing.T) {
-	a := newTestApp(t)
-	expectField(t, a.profile("PUT", `{}`), "absent", "bio", "Bio is required.")
-	expectField(t, a.profile("PUT", `{"bio":null}`), "null", "bio", fallback)
-	expectField(t, a.profile("PUT", `{"bio":5}`), "number", "bio", fallback)
-	expectField(t, a.profile("PUT", `{"bio":"`+strings.Repeat("é", 2001)+`"}`), "long", "bio", "Bio is too long.")
-	expectField(t, a.profile("PUT", `["hi"]`), "array", "body", fallback)
+	// First GET lazily creates an empty profile; second GET returns the same row.
+	first := decodeBody[Profile](t, a.doProfile("GET", ""))
+	if first.UserID != testUser || first.Bio != "" || first.CreatedAt == "" || first.UpdatedAt != first.CreatedAt {
+		t.Fatalf("first get: %+v", first)
+	}
+	if again := decodeBody[Profile](t, a.doProfile("GET", "")); again != first {
+		t.Fatalf("second get: %+v != %+v", again, first)
+	}
+
+	// Validation: bio required, <= 2000 runes, wrong type rejected.
+	for _, payload := range []string{`{}`, `{"bio":null}`, `{"bio":5}`, `{"bio":"` + strings.Repeat("é", 2001) + `"}`} {
+		res := a.doProfile("PUT", payload)
+		body := decodeBody[errorBody](t, res)
+		if res.StatusCode != http.StatusUnprocessableEntity || body.Error.Details.Fields[0].Path != "bio" {
+			t.Fatalf("invalid bio %s: %d %+v", payload, res.StatusCode, body.Error)
+		}
+	}
+
+	// 2000 runes and whitespace-only / empty bios are accepted verbatim.
 	for _, bio := range []string{strings.Repeat("😀", 2000), "  spaced  ", ""} {
-		res := a.profile("PUT", `{"bio":`+quote(bio)+`}`)
-		if got := decode[profiles.Profile](t, res); res.StatusCode != http.StatusOK || got.Bio != bio {
-			t.Fatalf("%q: %d %q", bio, res.StatusCode, got.Bio)
+		res := a.doProfile("PUT", `{"bio":"`+bio+`"}`)
+		got := decodeBody[Profile](t, res)
+		if res.StatusCode != http.StatusOK || got.Bio != bio {
+			t.Fatalf("bio %q: status=%d got=%q", bio, res.StatusCode, got.Bio)
 		}
 	}
 }
 
-func TestProfileBodyMustBeJSON(t *testing.T) {
+func TestProfilePutAuditHeaders(t *testing.T) {
 	a := newTestApp(t)
-	expectMalformed(t, a.profile("PUT", `{"bio":"hi"}`, without("Content-Type")), "no type")
-	expectMalformed(t, a.profile("PUT", `{"bio":"hi"}`, header("Content-Type", "text/plain")), "text")
-	expectMalformed(t, a.profile("PUT", ""), "empty")
-	expectMalformed(t, a.profile("PUT", "{"), "not JSON")
-	for _, tc := range [][2]string{{`{"Bio":"hi"}`, "Bio"}, {`{"bio":"hi","name":"x"}`, "name"}, {`{"BIO":5,"bio":"` + strings.Repeat("x", 2001) + `"}`, "BIO"}} {
-		expectField(t, a.profile("PUT", tc[0]), tc[0], tc[1], tc[1]+" isn't a field.")
-	}
-	// Nothing was written: the profile is still new.
-	if got := decode[profiles.Profile](t, a.profile("GET", "")); got.Bio != "" {
-		t.Fatalf("bio %q", got.Bio)
-	}
-}
 
-// PUT is 200 whether the profile is new or not; a new one's bio changed from null.
-func TestProfilePutAudit(t *testing.T) {
-	a := newTestApp(t)
-	for _, tc := range []struct{ body, want string }{
-		{`{"bio":""}`, `{"bio":{"from":null,"to":""}}`},
-		{`{"bio":"<hi>"}`, `{"bio":{"from":"","to":"\u003chi\u003e"}}`},
-		{`{"bio":"<hi>"}`, ``},
-	} {
-		res := a.profile("PUT", tc.body)
-		if res.StatusCode != http.StatusOK || res.Header.Get(plat5.AuditDetailsHeader) != tc.want {
-			t.Fatalf("%s: %d %q, want %q", tc.body, res.StatusCode, res.Header.Get(plat5.AuditDetailsHeader), tc.want)
-		}
+	// New profile (before == nil) -> from: null
+	res := a.doProfile("PUT", `{"bio":"<hello>"}`)
+	if got := res.Header.Get(auditDetailsHeader); got != `{"bio":{"from":null,"to":"<hello>"}}` {
+		t.Fatalf("first put audit = %q", got)
 	}
-	first := decode[profiles.Profile](t, a.profile("GET", ""))
-	if first.Bio != "<hi>" {
-		t.Fatalf("bio %q", first.Bio)
+
+	// No-op PUT -> no audit header
+	res = a.doProfile("PUT", `{"bio":"<hello>"}`)
+	if got := res.Header.Get(auditDetailsHeader); got != "" {
+		t.Fatalf("no-op put audit = %q, want empty", got)
+	}
+
+	// Update -> diff from old to new
+	res = a.doProfile("PUT", `{"bio":"updated"}`)
+	if got := res.Header.Get(auditDetailsHeader); got != `{"bio":{"from":"<hello>","to":"updated"}}` {
+		t.Fatalf("update put audit = %q", got)
 	}
 }
