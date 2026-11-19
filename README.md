@@ -251,7 +251,7 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `OTEL_TRACES_SAMPLER_RATIO` | `1` | Trace sampling ratio, `0` to `1`; parent-based |
 | `OTEL_SDK_DISABLED` | `false` | `true` → no OTLP; stdout + `/metrics` remain |
 
-A telemetry variable that is set but invalid stops the API at boot, naming it ([invalid values](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#invalid-values)).
+A telemetry variable that is set but invalid stops the API at boot, naming it ([telemetry](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md)).
 
 ## Telemetry
 
@@ -259,9 +259,9 @@ Follows Plat5's [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat
 
 | Signal | Path |
 |--------|------|
-| Logs | JSON stdout (`log/slog`): one `request completed` line per request, `info`, `warn` on a 4xx, `error` on a 5xx with `error_type` (`internal`, `db`, `network`) and `error_message`; with `route` (the template, or `unknown`), `request_id`, `trace_id`, and `node_id`, `member_id` and `user_id` from `X-Plat5-Project-Id`, `X-Plat5-Member-Id` and `X-Plat5-User-Id` ([logs](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#logs)) |
+| Logs | JSON stdout (`log/slog`): one `request completed` line per request, `info`, `warn` on a 4xx, `error` on a 5xx with `error_type` (`internal`, `db`, `network`) and `error_message`; with `route` (the template, or `unknown`), `request_id`, `trace_id`, and `node_id`, `member_id` and `user_id` from `X-Plat5-Project-Id`, `X-Plat5-Member-Id` and `X-Plat5-User-Id` |
 | Metrics scrape | Prometheus `/metrics` on `INTERNAL_PORT` |
-| Traces | OTLP HTTP when endpoint set (default); W3C Trace Context, `traceparent` in, and on to identity; HTTP server spans from Fiber's otel middleware, as [the contract](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#http-server-spans) has them: `{method} {route}`, `{method}` alone when no route matched, `url.query` redacted, `Error` on a 5xx with the log's `error_type` as `error.type`, never on a 4xx; `request_id` and the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id` |
+| Traces | OTLP HTTP when endpoint set (default); W3C Trace Context, `traceparent` in, and on to identity; HTTP server spans from Fiber's otel middleware (`{method} {route}`, `{method}` alone when no route matched, `url.query` redacted, `Error` on a 5xx with the log's `error_type` as `error.type`, never on a 4xx; `request_id` and the same ids as `plat5.node_id`, `plat5.member_id`, `plat5.user_id`) |
 | Metrics OTLP | On when endpoint set (default); set `OTEL_METRICS_EXPORTER=prometheus` to opt out |
 
 ```bash

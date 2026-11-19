@@ -139,7 +139,7 @@ type settings struct {
 }
 
 // readSettings reads the telemetry variables strictly: one set but invalid is an error
-// naming it (plat5 docs/reference/telemetry.md#invalid-values). Empty is unset.
+// naming it (plat5 docs/reference/telemetry.md). Empty is unset.
 func readSettings() (s settings, err error) {
 	disabled, err := oneOf("OTEL_SDK_DISABLED", "false", "true", "false")
 	if err != nil {
