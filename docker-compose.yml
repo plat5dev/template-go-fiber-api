@@ -18,8 +18,7 @@ services:
       INTERNAL_PORT: 3001
       DATABASE_PATH: /data/app.db
       OTEL_SERVICE_NAME: api
-      OTEL_SERVICE_NAMESPACE: api
-      DEPLOYMENT_ENV: docker
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=api,deployment.environment=docker
       # Identity's internal port, for its lifecycle log and the assignee check.
       IDENTITY_INTERNAL_URL: http://identity:3001
       # The permission a task's assignee needs on its project: the one

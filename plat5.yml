@@ -8,10 +8,6 @@
 # To add a service, write services/<name>.yml and list it under services.
 deletion_grace: 30d
 reserved_slugs: [new, settings, api, admin]
-users:
-  name:   # which token claims name a person at sign-in, and when (plat5 docs/reference/idp.md)
-    claims: [name, preferred_username]
-    sync: first_sign_in
 kinds:
   organization:
     path: /orgs/{organization}
@@ -40,10 +36,10 @@ roles:
     bindable_at: [organization, project]
 creator_role: admin
 # Rate limits (plat5 docs/reference/config/rate-limits.md). defaults.rate_limit
-# names the policies of every route that names none, and of route checks; a
-# route says rate_limit: false to have none.
+# names the policies of every route that names none, and of POST /access/routes;
+# a route says rate_limit: false to have none.
 rate_limits:
-  standard: { requests: 100, window_seconds: 1 }
+  standard: { requests: 100, window: 1s }
 defaults:
   rate_limit: [standard]
 services:

@@ -9,8 +9,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
-// Error is an answer in Plat5's error envelope. Each fallback sentence is plat5
-// docs/reference/error-copy.md's.
+// Error is an answer in Plat5's error envelope.
 type Error struct {
 	Status  int
 	Type    string // invalid_request_error or api_error

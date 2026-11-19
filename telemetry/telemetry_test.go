@@ -23,7 +23,6 @@ func unsetAll(t *testing.T) {
 		"OTEL_EXPORTER_OTLP_PROTOCOL", "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
 		"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
 		"OTEL_TRACES_SAMPLER_RATIO", "OTEL_METRIC_EXPORT_INTERVAL", "OTEL_RESOURCE_ATTRIBUTES",
-		"OTEL_SERVICE_VERSION",
 	} {
 		t.Setenv(key, "")
 	}
@@ -159,7 +158,7 @@ func TestLogLines(t *testing.T) {
 	}
 }
 
-// service.version: OTEL_SERVICE_VERSION, then OTEL_RESOURCE_ATTRIBUTES, then the build's.
+// service.version: OTEL_RESOURCE_ATTRIBUTES, then the build's.
 func TestServiceVersion(t *testing.T) {
 	unsetAll(t)
 	version := func(build string) string {
@@ -180,9 +179,5 @@ func TestServiceVersion(t *testing.T) {
 	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "service.version=v2.0.0")
 	if got := version("v1.2.3"); got != "v2.0.0" {
 		t.Fatalf("OTEL_RESOURCE_ATTRIBUTES: %q", got)
-	}
-	t.Setenv("OTEL_SERVICE_VERSION", "v3.0.0")
-	if got := version("v1.2.3"); got != "v3.0.0" {
-		t.Fatalf("OTEL_SERVICE_VERSION: %q", got)
 	}
 }

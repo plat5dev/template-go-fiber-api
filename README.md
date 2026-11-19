@@ -239,11 +239,7 @@ See `.env.example`. Export vars or use a process manager; Go does not load `.env
 | `IDENTITY_INTERNAL_URL` | unset | Identity's internal base URL, for its lifecycle log and the assignee check. The compose file sets `http://identity:3001`. Unset → the log isn't read, and a task with an assignee is a **503** |
 | `TASK_ASSIGNEE_PERMISSION` | required | The permission an assignee needs on the task's project ([Checking an assignee](#checking-an-assignee)). The compose file sets `project:read`. Unset or empty → the API exits at boot |
 | `OTEL_SERVICE_NAME` | `api` | Resource `service.name` |
-| `OTEL_SERVICE_NAMESPACE` | `api` | Resource `service.namespace` |
-| `OTEL_SERVICE_VERSION` | the build's `VERSION`, else `dev` | Resource `service.version` ([resource identity](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md#resource-identity), [Docker](#docker)) |
-| `OTEL_SERVICE_INSTANCE_ID` | `$HOSTNAME`, else `api-local` | Resource `service.instance.id` |
-| `DEPLOYMENT_ENV` / `OTEL_DEPLOYMENT_ENV` | `development` | Resource `deployment.environment` (`OTEL_DEPLOYMENT_ENV` wins) |
-| `OTEL_RESOURCE_ATTRIBUTES` | unset | Standard bag: `service.namespace=…,service.version=…,…` (vars above win) |
+| `OTEL_RESOURCE_ATTRIBUTES` | unset | Standard OTel resource attributes bag (`service.namespace=api,service.version=…,deployment.environment=…`; overrides defaults) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | OTLP base URL. Unset → no OTLP |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | unset | Optional full traces URL |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | unset | Optional full metrics URL |
@@ -259,7 +255,7 @@ A telemetry variable that is set but invalid stops the API at boot, naming it ([
 
 ## Telemetry
 
-Contract: Plat5 [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md).
+Follows Plat5's [`docs/reference/telemetry.md`](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md) conventions so logs, metrics, and traces correlate with the gateway in the local observability stack.
 
 | Signal | Path |
 |--------|------|

@@ -115,8 +115,7 @@ func Setup(ctx context.Context, version string) (shutdown func(context.Context) 
 }
 
 // newResource layers the resource: the service's defaults (version among them), then
-// OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME, then the convenience variables that are
-// set.
+// standard OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME.
 func newResource(ctx context.Context, version string) (*resource.Resource, error) {
 	const deploymentEnvironment = attribute.Key("deployment.environment")
 	defaults := []attribute.KeyValue{
@@ -126,25 +125,10 @@ func newResource(ctx context.Context, version string) (*resource.Resource, error
 		semconv.ServiceVersion(version),
 		deploymentEnvironment.String("development"),
 	}
-	var overrides []attribute.KeyValue
-	for key, vars := range map[attribute.Key][]string{
-		semconv.ServiceNamespaceKey:  {"OTEL_SERVICE_NAMESPACE"},
-		semconv.ServiceVersionKey:    {"OTEL_SERVICE_VERSION"},
-		semconv.ServiceInstanceIDKey: {"OTEL_SERVICE_INSTANCE_ID"},
-		deploymentEnvironment:        {"OTEL_DEPLOYMENT_ENV", "DEPLOYMENT_ENV"},
-	} {
-		for _, v := range vars {
-			if value := env(v, ""); value != "" {
-				overrides = append(overrides, key.String(value))
-				break
-			}
-		}
-	}
 	return resource.New(ctx,
 		resource.WithAttributes(defaults...),
 		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
-		resource.WithAttributes(overrides...),
 	)
 }
 
