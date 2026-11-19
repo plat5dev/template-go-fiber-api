@@ -90,7 +90,7 @@ lifecycle.go     # Identity lifecycle event consumer + cursor management
 telemetry.go     # slog JSON logger, Prometheus metrics, OTel spans & OTLP export
 *_test.go        # Tests for routes, validation, access eval, lifecycle, health/metrics
 plat5.yml        # Deployment config (kinds, roles, rate limits, services/)
-plat5.dev.yml    # Local dev stack config for `plat5 start`
+plat5.local.yml  # Local dev stack config for `plat5 start`
 ```
 
 ```bash
