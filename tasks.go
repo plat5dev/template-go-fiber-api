@@ -109,6 +109,10 @@ func rowAffected(res sql.Result, err error) (bool, error) {
 
 // HTTP handlers.
 
+// defaultTaskAssigneePermission is the permission a task's assignee must hold
+// on the project (matches services/api.yml's read permission).
+const defaultTaskAssigneePermission = "project:read"
+
 type taskHandler struct {
 	store              *taskStore
 	access             *accessClient
@@ -116,6 +120,9 @@ type taskHandler struct {
 }
 
 func newTaskHandler(store *taskStore, access *accessClient, assigneePermission string) *taskHandler {
+	if assigneePermission == "" {
+		assigneePermission = defaultTaskAssigneePermission
+	}
 	return &taskHandler{store: store, access: access, assigneePermission: assigneePermission}
 }
 

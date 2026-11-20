@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"syscall"
 	"time"
 
@@ -24,8 +23,6 @@ import (
 // version is set at build time with -ldflags "-X main.version=$VERSION".
 var version = "dev"
 
-var permissionName = regexp.MustCompile(`^[a-z0-9:._-]{1,64}$`)
-
 func main() {
 	slog.SetDefault(newLogger(os.Stdout))
 	if err := run(); err != nil {
@@ -35,10 +32,6 @@ func main() {
 }
 
 func run() error {
-	assigneePermission := os.Getenv("TASK_ASSIGNEE_PERMISSION")
-	if !permissionName.MatchString(assigneePermission) {
-		return fmt.Errorf("TASK_ASSIGNEE_PERMISSION is %q: must match [a-z0-9:._-]{1,64} (e.g. project:read)", assigneePermission)
-	}
 	identityURL := os.Getenv("IDENTITY_INTERNAL_URL")
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -63,7 +56,7 @@ func run() error {
 	defer sqlDB.Close()
 
 	app := newApp(
-		newTaskHandler(newTaskStore(sqlDB), newAccessClient(identityURL), assigneePermission),
+		newTaskHandler(newTaskStore(sqlDB), newAccessClient(identityURL), defaultTaskAssigneePermission),
 		newProfileHandler(newProfileStore(sqlDB)),
 	)
 

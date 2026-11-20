@@ -1,10 +1,9 @@
-# The API's routes (plat5 docs/reference/config/services.md): tasks inside a
+# The API's routes (https://github.com/plat5dev/plat5/blob/master/docs/reference/config/services.md): tasks inside a
 # project, and the person's own profile. The gateway forwards a project's
 # routes with its id in the path and the caller's member id in
 # X-Plat5-Member-Id, and the profile with the caller's user id in the path.
-# The API checks a task's assignee against TASK_ASSIGNEE_PERMISSION on the
-# project, which matches the permission reading tasks requires here
-# (project:read): rename one, rename the other.
+# The API checks a task's assignee against defaultTaskAssigneePermission in
+# tasks.go (project:read), matching the read permission here.
 api:
   url: http://api:3000
   scopes:

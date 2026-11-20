@@ -179,19 +179,6 @@ func (a *testApp) requestLogs() []map[string]any {
 	return out
 }
 
-func TestPermissionNameValidation(t *testing.T) {
-	for _, ok := range []string{"project:read", "tasks:assignable", "a.b_c-d"} {
-		if !permissionName.MatchString(ok) {
-			t.Errorf("expected %q to be valid", ok)
-		}
-	}
-	for _, bad := range []string{"", " ", "Project:Read", "project read", strings.Repeat("a", 65)} {
-		if permissionName.MatchString(bad) {
-			t.Errorf("expected %q to be rejected", bad)
-		}
-	}
-}
-
 func TestValidationErrorZeroFieldsDoesNotPanic(t *testing.T) {
 	e := errValidation()
 	if e.Status != http.StatusUnprocessableEntity || e.Code != "VALIDATION_ERROR" || e.Message != fallbackValidation {

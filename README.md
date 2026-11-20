@@ -29,7 +29,7 @@ To run the API locally on your host instead of in Docker:
 
 ```bash
 plat5 start -x app
-TASK_ASSIGNEE_PERMISSION=project:read go run .
+go run .
 ```
 
 (`-x app` points the gateway at your host port `3000`. Because identity's internal port is only on the Docker network, the lifecycle consumer is disabled and assignee checks return `503` when `IDENTITY_INTERNAL_URL` is unset.)
@@ -58,7 +58,7 @@ TASK_ASSIGNEE_PERMISSION=project:read go run .
 
 - **Error envelope & pagination:** Standard Plat5 error envelope ([Errors](https://github.com/plat5dev/plat5/blob/master/docs/reference/errors.md#envelope)) and cursor pagination ([Lists](https://github.com/plat5dev/plat5/blob/master/docs/reference/lists.md)).
 - **Audit headers:** Writes set `X-Plat5-Audit-Details` (visible-ASCII JSON diff, ≤ 4096 bytes) and `POST` sets `X-Plat5-Audit-Created` ([Audit](https://github.com/plat5dev/plat5/blob/master/docs/concepts/audit.md#what-a-service-adds)).
-- **Access evaluation:** Setting a task's `assignee_id` checks `POST {IDENTITY_INTERNAL_URL}/access/v1/evaluation` for `TASK_ASSIGNEE_PERMISSION` on the project, failing closed with `503` if identity cannot answer ([Access evaluation](https://github.com/plat5dev/plat5/blob/master/docs/reference/api/internal.md#access-evaluation)).
+- **Access evaluation:** Setting a task's `assignee_id` checks `POST {IDENTITY_INTERNAL_URL}/access/v1/evaluation` for `defaultTaskAssigneePermission` (`project:read` in `tasks.go`) on the project, failing closed with `503` if identity cannot answer ([Access evaluation](https://github.com/plat5dev/plat5/blob/master/docs/reference/api/internal.md#access-evaluation)).
 - **Lifecycle cleanup:** Polls `GET {IDENTITY_INTERNAL_URL}/internal/events?types=node.purged,user.deleted` in a single SQLite transaction with `feed_cursors`, removing tasks when a project is purged and profiles when a user is deleted ([Following the log](https://github.com/plat5dev/plat5/blob/master/docs/concepts/lifecycle.md#following-the-log)).
 - **Telemetry:** Structured JSON logs (`log/slog`) with `request_id`, `trace_id`, `span_id`, and `X-Plat5-*` caller IDs; W3C `traceparent` propagation; `/metrics` scrape always on; optional OTLP/HTTP trace and metric push when `OTEL_EXPORTER_OTLP_ENDPOINT` is set ([Telemetry](https://github.com/plat5dev/plat5/blob/master/docs/reference/telemetry.md)).
 
@@ -71,7 +71,6 @@ See `.env.example`.
 | `PORT` | `3000` | Public Fiber HTTP port |
 | `INTERNAL_PORT` | `3001` | Internal `net/http` port (`/health/*`, `/metrics`) |
 | `DATABASE_PATH` | `./data/app.db` | SQLite database file (opened in WAL mode) |
-| `TASK_ASSIGNEE_PERMISSION` | **required** | Permission an assignee needs on the project (e.g. `project:read`) |
 | `IDENTITY_INTERNAL_URL` | unset | Identity internal base URL (`http://identity:3001` in Docker Compose) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Enables OTLP/HTTP trace & metric push (standard `OTEL_*` vars supported by the SDK) |
 | `OTEL_METRICS_EXPORTER` | `otlp` when endpoint set | Set `prometheus` to push traces only and scrape `/metrics` |
@@ -94,8 +93,8 @@ plat5.local.yml  # Local dev stack config for `plat5 start`
 ```
 
 ```bash
-go test -race ./...                             # run tests
-go vet ./...                                    # static checks
-TASK_ASSIGNEE_PERMISSION=project:read go run .  # run locally
+go test -race ./...  # run tests
+go vet ./...         # static checks
+go run .             # run locally
 docker build --target prod --build-arg VERSION=v1.0.0 -t api .
 ```
