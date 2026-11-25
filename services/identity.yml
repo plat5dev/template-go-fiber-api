@@ -1,5 +1,5 @@
 # Identity's routes at the gateway, for every kind in plat5.yml. plat5 routes
-# generate wrote them (plat5 docs/reference/config/generated-routes.md); from
+# generate wrote them (https://github.com/plat5dev/plat5/blob/master/docs/reference/config/generated-routes.md); from
 # here this is an ordinary service file, served as written.
 #
 # To drop a route, delete it, or delete one verb under its methods. Edit a
@@ -17,114 +17,148 @@ identity:
       routes:
         - path: /
           methods:
-            GET: { required_permissions: [organization:read] }
-            PATCH: { required_permissions: [organization:write] }
-            DELETE: { required_permissions: [organization:delete] }
+            GET: { permissions: organization:read }
+            PATCH: { permissions: organization:write }
+            DELETE: { permissions: organization:delete }
         - path: /restore
           allow_deleted: true
           methods:
-            POST: { required_permissions: [organization:delete] }
+            POST: { permissions: organization:delete }
         - path: /projects
           upstream: /nodes/{organization.id}/children/project
           methods:
-            GET: { required_permissions: any_member }
-            POST: { required_permissions: [project:create] }
+            GET: { permissions: any_member }
+            POST: { permissions: project:create }
         - path: /membership
           upstream: /nodes/{organization.id}/memberships/{member.id}
           methods:
-            GET: { required_permissions: any_member }
-            DELETE: { required_permissions: any_member }
+            GET: { permissions: any_member }
+            DELETE: { permissions: any_member }
         - path: /bindings
           methods:
-            GET: { required_permissions: [organization:bindings:read] }
-            POST: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: organization:bindings:read }
+            POST: { permissions: organization:bindings:write }
         - path: /bindings/{binding_id}
           methods:
-            PATCH: { required_permissions: [organization:bindings:write] }
-            DELETE: { required_permissions: [organization:bindings:write] }
+            PATCH: { permissions: organization:bindings:write }
+            DELETE: { permissions: organization:bindings:write }
         - path: /service-accounts
           methods:
-            GET: { required_permissions: [organization:bindings:read] }
-            POST: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: organization:bindings:read }
+            POST: { permissions: organization:bindings:write }
         - path: /service-accounts/{service_account_id}
           methods:
-            GET: { required_permissions: [organization:bindings:read] }
-            PATCH: { required_permissions: [organization:bindings:write] }
-            DELETE: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: organization:bindings:read }
+            PATCH: { permissions: organization:bindings:write }
+            DELETE: { permissions: organization:bindings:write }
         - path: /service-accounts/{service_account_id}/keys
           methods:
-            GET: { required_permissions: [organization:bindings:write] }
-            POST: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: organization:bindings:write }
+            POST: { permissions: organization:bindings:write }
         - path: /service-accounts/{service_account_id}/keys/{key_id}
           methods:
-            DELETE: { required_permissions: [organization:bindings:write] }
+            PATCH: { permissions: organization:bindings:write }
+            DELETE: { permissions: organization:bindings:write }
         - path: /invites
           methods:
-            GET: { required_permissions: [organization:bindings:write] }
-            POST: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: organization:bindings:write }
+            POST: { permissions: organization:bindings:write }
         - path: /invites/{invite_id}
           methods:
-            DELETE: { required_permissions: [organization:bindings:write] }
+            DELETE: { permissions: organization:bindings:write }
         - path: /roles
           methods:
-            GET: { required_permissions: any_member }
+            GET: { permissions: any_member }
+            POST: { permissions: organization:bindings:write }
+        - path: /roles/{role_id}
+          methods:
+            GET: { permissions: any_member }
+            PATCH: { permissions: organization:bindings:write }
+            DELETE: { permissions: organization:bindings:write }
+        - path: /permissions
+          methods:
+            GET: { permissions: organization:bindings:read }
+        - path: /security-policy
+          methods:
+            GET: { permissions: organization:bindings:read }
+            PATCH: { permissions: organization:bindings:write }
         - path: /members
           methods:
-            GET: { required_permissions: [organization:bindings:read] }
+            GET: { permissions: organization:bindings:read }
         - path: /members/{member_id}
           methods:
-            GET: { required_permissions: any_member }
-            DELETE: { required_permissions: [organization:bindings:write] }
+            GET: { permissions: any_member }
+            DELETE: { permissions: organization:bindings:write }
+        - path: /members/{member_id}/status
+          methods:
+            PATCH: { permissions: organization:bindings:write }
+        - path: /groups
+          methods:
+            GET: { permissions: organization:bindings:read }
+            POST: { permissions: organization:bindings:write }
+        - path: /groups/{group_id}
+          methods:
+            GET: { permissions: organization:bindings:read }
+            PATCH: { permissions: organization:bindings:write }
+            DELETE: { permissions: organization:bindings:write }
+        - path: /groups/{group_id}/members
+          methods:
+            GET: { permissions: organization:bindings:read }
+            POST: { permissions: organization:bindings:write }
+        - path: /groups/{group_id}/members/{member_id}
+          methods:
+            DELETE: { permissions: organization:bindings:write }
     project:
       upstream_prefix: /nodes/{project.id}
       routes:
         - path: /
           methods:
-            GET: { required_permissions: [project:read] }
-            PATCH: { required_permissions: [project:write] }
-            DELETE: { required_permissions: [project:delete] }
+            GET: { permissions: project:read }
+            PATCH: { permissions: project:write }
+            DELETE: { permissions: project:delete }
         - path: /restore
           allow_deleted: true
           methods:
-            POST: { required_permissions: [project:delete] }
+            POST: { permissions: project:delete }
         - path: /membership
           upstream: /nodes/{project.id}/memberships/{member.id}
           methods:
-            GET: { required_permissions: any_member }
+            GET: { permissions: any_member }
         - path: /bindings
           methods:
-            GET: { required_permissions: [project:bindings:read] }
-            POST: { required_permissions: [project:bindings:write] }
+            GET: { permissions: project:bindings:read }
+            POST: { permissions: project:bindings:write }
         - path: /bindings/{binding_id}
           methods:
-            PATCH: { required_permissions: [project:bindings:write] }
-            DELETE: { required_permissions: [project:bindings:write] }
+            PATCH: { permissions: project:bindings:write }
+            DELETE: { permissions: project:bindings:write }
         - path: /service-accounts
           methods:
-            GET: { required_permissions: [project:bindings:read] }
-            POST: { required_permissions: [project:bindings:write] }
+            GET: { permissions: project:bindings:read }
+            POST: { permissions: project:bindings:write }
         - path: /service-accounts/{service_account_id}
           methods:
-            GET: { required_permissions: [project:bindings:read] }
-            PATCH: { required_permissions: [project:bindings:write] }
-            DELETE: { required_permissions: [project:bindings:write] }
+            GET: { permissions: project:bindings:read }
+            PATCH: { permissions: project:bindings:write }
+            DELETE: { permissions: project:bindings:write }
         - path: /service-accounts/{service_account_id}/keys
           methods:
-            GET: { required_permissions: [project:bindings:write] }
-            POST: { required_permissions: [project:bindings:write] }
+            GET: { permissions: project:bindings:write }
+            POST: { permissions: project:bindings:write }
         - path: /service-accounts/{service_account_id}/keys/{key_id}
           methods:
-            DELETE: { required_permissions: [project:bindings:write] }
+            PATCH: { permissions: project:bindings:write }
+            DELETE: { permissions: project:bindings:write }
         - path: /invites
           methods:
-            GET: { required_permissions: [guests:write] }
-            POST: { required_permissions: [guests:write] }
+            GET: { permissions: guests:write }
+            POST: { permissions: guests:write }
         - path: /invites/{invite_id}
           methods:
-            DELETE: { required_permissions: [guests:write] }
+            DELETE: { permissions: guests:write }
         - path: /roles
           methods:
-            GET: { required_permissions: any_member }
+            GET: { permissions: any_member }
     user:
       routes:
         - path: /orgs
@@ -141,7 +175,7 @@ identity:
           methods: [GET, POST]
         - path: /user/keys/{key_id}
           upstream: /users/{user.id}/keys/{key_id}
-          methods: [DELETE]
+          methods: [PATCH, DELETE]
         - path: /user/invites/redeem
           upstream: /users/{user.id}/invites/redeem
           methods: [POST]
