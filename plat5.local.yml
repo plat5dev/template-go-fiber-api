@@ -5,7 +5,7 @@ cli: ">=0.16.0"  # the oldest plat5 CLI that reads this file
 
 # Image tags: the releases this starter runs on.
 versions:
-  plat5: v0.18.0
+  plat5: v0.18.1
   auth: v0.4.1
 
 # What plat5 start runs beside Plat5. plat5 start -x <module> skips one for a run.
