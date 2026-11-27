@@ -2,13 +2,14 @@
 # generate wrote them (https://github.com/plat5dev/plat5/blob/master/docs/reference/config/generated-routes.md); from
 # here this is an ordinary service file, served as written.
 #
-# To drop a route, delete it, or delete one verb under its methods. Edit a
-# path or a permission the same way.
+# To wrap a route in your own service, claim that method and path in your
+# service file; plat5 routes generate skips it automatically. To permanently
+# disable a route without replacing it, list "<METHOD> /path" under
+# routes.exclude in plat5.local.yml.
 #
 # Regenerate after adding or removing a kind, or changing a kind's path or
 # list_permission: plat5 routes generate. It overwrites this file, keeping only
-# url, timeouts and max_body_bytes, so review the diff and delete again what
-# you had dropped.
+# url, timeouts and max_body_bytes.
 identity:
   url: http://identity:3000
   scopes:
