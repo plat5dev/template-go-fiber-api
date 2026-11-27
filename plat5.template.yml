@@ -3,7 +3,7 @@ kind: api
 description: Go + Fiber reference API (tasks inside a project, and the person's profile)
 
 # The project's config: plat5 init copies it, and the service files it lists,
-# to the project's root, adding only the customer console's origin.
+# to the project's root.
 config: plat5.yml
 
 # What the operator plane may call on this API. plat5 init adds it to
